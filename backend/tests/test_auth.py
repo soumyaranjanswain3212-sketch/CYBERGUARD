@@ -55,6 +55,17 @@ class AnalystAuthenticationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()
 
+    def test_built_dashboard_is_served_from_the_api_origin(self):
+        if not main.frontend_dist.is_dir():
+            self.skipTest("Frontend build is not available.")
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn('<div id="root"></div>', response.text)
+        self.assertNotIn("/src/main.tsx", response.text)
+
     def test_login_sets_httponly_strict_session_and_returns_csrf_token(self):
         response = self.client.post(
             "/api/auth/login",

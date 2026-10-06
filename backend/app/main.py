@@ -6,11 +6,13 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from starlette.staticfiles import StaticFiles
 
 from . import storage
 from .analyzer import analyze_cloudflare_firewall_event, analyze_event
@@ -332,3 +334,8 @@ def analyze(
     _validate_analysis_input(analysis)
     event = analyze_event(analysis.model_dump())
     return storage.insert_event(event)
+
+
+frontend_dist = Path(__file__).resolve().parents[2] / "dist"
+if frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

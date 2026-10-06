@@ -13,7 +13,7 @@ CyberGuard is a student-built cybersecurity monitoring prototype for **authorize
 - Browse incidents created by analysis requests and persisted in SQLite; search and filter them, inspect evidence, and update incident status.
 - View event totals, hourly activity, category breakdown, and recent analyses, all derived from the API's persisted event records.
 - Sign in to the analyst dashboard with a salted-password-hash account and a short-lived, CSRF-protected session.
-- Run the API and UI locally with separate development servers.
+- Run the API and UI locally with separate development servers or serve the built UI and API together from one deployment.
 
 ## Start locally
 
@@ -46,7 +46,24 @@ python -m uvicorn backend.app.main:app --reload --port 8000 --env-file .env
 
 Open `http://localhost:5173` and sign in using the username in `.env` and the password entered into the password-hash tool. The API is documented at `http://localhost:8000/docs`. The dashboard requires the API and displays no seeded or simulated incidents. Analysis events are stored in SQLite at `backend/cyberguard.sqlite3` by default; set `CYBERGUARD_DB_PATH` to choose another location.
 
-Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_CORS_ORIGINS` to a comma-separated list of trusted frontend origins. For a production deployment, set `CYBERGUARD_COOKIE_SECURE=true`, use HTTPS, and serve the UI/API on the same site behind an authenticated TLS reverse proxy. Never expose the development server or allow wildcard CORS on a public deployment.
+The Vite development server proxies `/api` and `/health` to the local backend. For another API origin, optionally set `VITE_API_BASE_URL` before building and `CYBERGUARD_CORS_ORIGINS` to a comma-separated list of trusted frontend origins. Never expose the development server or allow wildcard CORS on a public deployment.
+
+## Azure App Service container
+
+The repository includes a multi-stage `Dockerfile` that builds the dashboard and serves it, the API, and the URL model from the same origin. It listens on `PORT` (default `8000`), uses the App Service persistent `/home/cyberguard.sqlite3` path, enables secure cookies, and starts one API worker. One worker and one App Service instance are intentional while SQLite is used; do not enable scale-out for this database configuration.
+
+Build and run locally after creating the `.env` file using the setup above and installing Docker Desktop:
+
+```powershell
+docker build -t cyberguard:local .
+docker run --rm -p 8000:8000 --env-file .env `
+  -e CYBERGUARD_COOKIE_SECURE=true `
+  -v cyberguard-data:/home cyberguard:local
+```
+
+Create the password hash with `python -m backend.scripts.set_analyst_password` and generate the two independent secrets locally before filling `.env`; do not use placeholders or put real values in source control. Open `http://localhost:8000`. The Docker volume keeps the local SQLite file between container restarts.
+
+For Azure, create an Azure Container Registry and a Linux App Service that can pull its image. Configure the Web App to use port `8000` and enable App Service storage (`WEBSITES_PORT=8000`, `WEBSITES_ENABLE_APP_SERVICE_STORAGE=true`). Set the four `CYBERGUARD_*` analyst/session/ingestion values in App Service configuration as secrets, not in the repository or image. Use the App Service HTTPS URL; secure cookies are on in the image. Keep scale-out at one instance with SQLite, configure backups for `/home`, and verify `/health`, analyst sign-in, event persistence after restart, and authorized Logpush delivery before relying on it. App Service/ACR creation and an actual live deployment require an authenticated Azure subscription, a registry image, and secrets configured in that account; none are stored in this repository.
 
 ### Analyst authentication
 
