@@ -66,8 +66,14 @@ def _decode(row: sqlite3.Row) -> dict:
 
 
 def insert_event(event: dict) -> dict:
+    return insert_events([event])[0]
+
+
+def insert_events(events: list[dict]) -> list[dict]:
+    if not events:
+        return []
     with _connection() as connection:
-        connection.execute(
+        connection.executemany(
             """
             INSERT INTO events (
                 id, timestamp, source, subject, category, severity, score, status,
@@ -75,20 +81,26 @@ def insert_event(event: dict) -> dict:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO NOTHING
             """,
-            (
-                event["id"], event["timestamp"], event["source"], event["subject"],
-                event["category"], event["severity"], event["score"], event["status"],
-                event["summary"], json.dumps(event["indicators"]),
-                json.dumps(event["recommendations"]),
-            ),
+            [
+                (
+                    event["id"], event["timestamp"], event["source"], event["subject"],
+                    event["category"], event["severity"], event["score"], event["status"],
+                    event["summary"], json.dumps(event["indicators"]),
+                    json.dumps(event["recommendations"]),
+                )
+                for event in events
+            ],
         )
-        row = connection.execute(
-            "SELECT * FROM events WHERE id = ?",
-            (event["id"],),
-        ).fetchone()
-    if row is None:
-        raise RuntimeError(f"Event insert did not produce a stored record: {event['id']}")
-    return _decode(row)
+        rows = [
+            connection.execute(
+                "SELECT * FROM events WHERE id = ?",
+                (event["id"],),
+            ).fetchone()
+            for event in events
+        ]
+    if any(row is None for row in rows):
+        raise RuntimeError("Event batch insert did not produce all stored records.")
+    return [_decode(row) for row in rows if row is not None]
 
 
 def list_events(limit: int = 500, offset: int = 0) -> list[dict]:

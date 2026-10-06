@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import hashlib
 import re
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -228,6 +230,106 @@ def analyze_event(payload: dict) -> dict:
         "score": score,
         "status": "New",
         "summary": _explanation(category, severity, indicators),
+        "indicators": indicators,
+        "recommendations": list(dict.fromkeys(recommendations)),
+    }
+
+
+def analyze_cloudflare_firewall_event(payload: dict) -> dict:
+    action = str(payload.get("Action", "unknown")).strip().casefold()[:80]
+    source = str(payload.get("Source", "")).strip()[:80]
+    description = " ".join(str(payload.get("Description", "")).split())[:160]
+    host = str(payload.get("ClientRequestHost", "")).strip()[:180]
+    method = str(payload.get("ClientRequestMethod", "")).strip().upper()[:16]
+    ray_id = str(payload.get("RayID", "")).strip()[:80]
+    ip_class = str(payload.get("ClientIPClass", "")).strip()[:40]
+
+    weights = {
+        "block": 75,
+        "connectionclose": 75,
+        "challenge": 55,
+        "jschallenge": 55,
+        "managedchallenge": 55,
+        "log": 30,
+        "challengesolved": 20,
+        "challengebypassed": 20,
+        "jschallengesolved": 20,
+        "jschallengebypassed": 20,
+        "managedchallengenoninteractivesolved": 20,
+        "managedchallengeinteractivesolved": 20,
+        "managedchallengebypassed": 20,
+        "allow": 10,
+        "bypass": 10,
+    }
+    score = weights.get(action, 15)
+    indicators = [f"Cloudflare firewall action: {action}"]
+    if source:
+        indicators.append(f"Cloudflare security source: {source[:80]}")
+        if source.casefold() == "l7ddos":
+            score += 15
+    if description:
+        indicators.append(f"Matched rule: {description}")
+    if method or host:
+        indicators.append(f"Request target: {' '.join(part for part in (method, host) if part)}")
+    if ip_class.casefold() in {"tor", "scan", "badhost"}:
+        indicators.append(f"Cloudflare client IP classification: {ip_class}")
+        score += 15
+    if ray_id:
+        indicators.append(f"Cloudflare Ray ID: {ray_id}")
+
+    score = min(100, score)
+    severity = _score_level(score)
+    if action in {"block", "connectionclose", "challenge", "jschallenge", "managedchallenge"}:
+        category = "Cloudflare firewall intervention"
+        recommendations = [
+            "Review the Cloudflare Ray ID and matched rule in the Cloudflare dashboard",
+            "Confirm the action matches the intended security policy",
+        ]
+    else:
+        category = "Cloudflare firewall observation"
+        recommendations = [
+            "Review the matched Cloudflare rule and request context",
+            "Compare repeated events before changing the security policy",
+        ]
+    if severity in ("Critical", "High"):
+        recommendations.append("Escalate this event to the security analyst")
+
+    observed_at = payload["observed_at"]
+    if isinstance(observed_at, str):
+        timestamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    elif isinstance(observed_at, (int, float)):
+        seconds = observed_at / 1_000_000_000 if abs(observed_at) >= 1_000_000_000_000 else observed_at
+        timestamp = datetime.fromtimestamp(seconds, UTC)
+    else:
+        raise ValueError("Cloudflare Datetime must be an RFC3339 string, Unix seconds, or Unix nanoseconds.")
+    if timestamp.utcoffset() is None:
+        raise ValueError("Cloudflare Datetime must include a timezone.")
+    timestamp = timestamp.astimezone(UTC)
+
+    canonical_record = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    event_id = hashlib.sha256(canonical_record.encode("utf-8")).hexdigest().upper()
+    subject_parts = ["Cloudflare", action]
+    if method:
+        subject_parts.append(method)
+    if host:
+        subject_parts.append(host)
+    subject = " ".join(subject_parts)[:88]
+    summary = (
+        f"{severity} Cloudflare firewall event: action '{action}'"
+        f"{f' matched {description}' if description else ''}. "
+        "This reflects Cloudflare telemetry and is not independent proof of compromise."
+    )
+
+    return {
+        "id": f"CF-{event_id}",
+        "timestamp": timestamp.isoformat(),
+        "source": "Cloudflare Logpush",
+        "subject": subject or "Cloudflare firewall event",
+        "category": category,
+        "severity": severity,
+        "score": score,
+        "status": "New",
+        "summary": summary,
         "indicators": indicators,
         "recommendations": list(dict.fromkeys(recommendations)),
     }

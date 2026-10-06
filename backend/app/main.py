@@ -6,12 +6,13 @@ import os
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
-from .analyzer import analyze_event
+from .analyzer import analyze_cloudflare_firewall_event, analyze_event
+from .cloudflare import CloudflareBatchError, decode_logpush_batch
 
 app = FastAPI(
     title="CyberGuard Threat Analysis API",
@@ -164,6 +165,31 @@ def ingest_telemetry(
     event["timestamp"] = request.observed_at.isoformat()
     event["source"] = request.source_name
     return storage.insert_event(event)
+
+
+@app.post("/api/ingest/cloudflare/logpush")
+async def ingest_cloudflare_logpush(request: Request) -> dict:
+    _check_ingest_authorization(request.headers.get("authorization"))
+    body_chunks: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Compressed Logpush batch exceeds the 10 MiB request limit.")
+        body_chunks.append(chunk)
+    try:
+        records, is_validation_probe = decode_logpush_batch(
+            b"".join(body_chunks),
+            request.headers.get("content-encoding", ""),
+        )
+        if is_validation_probe:
+            return {"records_processed": 0, "validation_probe": True}
+        analyzed = [analyze_cloudflare_firewall_event(record) for record in records]
+    except (CloudflareBatchError, ValueError, OverflowError, OSError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    saved = storage.insert_events(analyzed)
+    return {"records_processed": len(saved), "validation_probe": False}
 
 
 @app.post("/api/analyze")

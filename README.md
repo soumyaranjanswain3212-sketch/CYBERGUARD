@@ -37,7 +37,7 @@ Open `http://localhost:5173`. The API is documented at `http://localhost:8000/do
 
 Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_CORS_ORIGINS` to a comma-separated list of trusted frontend origins. Never expose the development server or allow wildcard CORS on a public deployment.
 
-## Authorized webhook ingestion
+## Authorized telemetry ingestion
 
 `POST /api/ingest` accepts a normalized event from an authorized firewall, EDR, or application/API feed. The sender must map its event into the contract below; this endpoint does not connect to or fetch data from a vendor by itself.
 
@@ -46,6 +46,12 @@ Configure a high-entropy `CYBERGUARD_INGEST_TOKEN` in the API server's secret ma
 Required fields are `source` (`network`, `auth`, `email`, `identity`, or `url`), `source_name` (the trusted integration label), `source_event_id` (stable ID from the sender), and timezone-aware `observed_at`. Other accepted fields are the same validated analysis fields used by `/api/analyze`. Network measurements include `requests_per_minute` with `baseline_requests_per_minute`, `bytes_out_mb` with `baseline_bytes_out_mb`, and/or `error_rate_percent`. A value/baseline pair must be supplied together. Unknown fields are rejected. Repeated delivery of the same source name and event ID is idempotent; the external event ID is hashed for the stored CyberGuard ID and the raw webhook payload is not retained.
 
 The endpoint returns HTTP 202 and the persisted analysis event. It reports a risk assessment, not an automatic block or containment action. Provider-specific field mapping, sender-side retries, time synchronization, and delivery monitoring must be configured and tested with the actual authorized feed before operational use.
+
+### Cloudflare Logpush
+
+`POST /api/ingest/cloudflare/logpush` accepts Cloudflare's gzipped NDJSON `firewall_events` batches directly. See Cloudflare's [HTTP destination requirements](https://developers.cloudflare.com/logs/logpush/logpush-job/enable-destinations/http/). Configure the Logpush zone job with destination `https://<your-host>/api/ingest/cloudflare/logpush`, and add `header_Authorization=Bearer%20<URL-encoded-token>` to `destination_conf`. Select `Action` and `Datetime`; useful optional fields are `RayID`, `Source`, `Description`, `ClientRequestHost`, `ClientRequestMethod`, and `ClientIPClass`. Keep NDJSON output and RFC3339 timestamps. Set `max_upload_bytes` to 5,000,000 or greater; the receiver bounds decompressed batches to 5 MiB. The HTTPS endpoint must have a trusted certificate and be reachable by Cloudflare; restrict access using Cloudflare's current IP ranges and your TLS/reverse-proxy policy.
+
+The Cloudflare route validates the bearer secret, gzip stream, NDJSON records, `Action`, and `Datetime` before analyzing and transactionally saving a batch. Cloudflare's documented gzipped `{"content":"tests"}` destination-validation probe is acknowledged without creating an incident. Repeated identical records are deduplicated. Client IP addresses and raw request bodies are not saved; the dashboard gets action, rule, request-target, and Ray ID evidence for analyst review. Scores reflect Cloudflare's reported firewall action and related signals; they are triage indicators, not proof of compromise or automatic response. A Logpush job and a stable public HTTPS endpoint still need to be configured before actual events will arrive.
 
 ## Detection method and scoring
 
@@ -64,19 +70,21 @@ React + TypeScript dashboard (search, filters, event triage)
   ▼
 FastAPI API ── Pydantic input validation
   │
+  ├── Authenticated normalized-event and Cloudflare Logpush ingestion
   ├── Rule-based signal extraction (text, URL shape, auth flags)
   ├── Weighted heuristic scoring + severity bands
-  └── Explanation, indicators, recommended actions
+  ├── Explanation, indicators, recommended actions
+  └── Transactional, deduplicated SQLite event storage
 ```
 
-The dashboard polls the API every 30 seconds. Authenticated webhook ingestion is available for a sender that is explicitly configured to POST the normalized event contract; no firewall, EDR, mail, or identity provider is connected until that mapping and feed are configured. Analysis requests and incident status changes are persisted in SQLite. Webhook authentication does not protect the dashboard read/status endpoints; keep the complete API on a trusted local/VPN network or put it behind an authenticated reverse proxy. Production deployment still needs role-based access, audit logs, rate limiting, privacy controls, managed database backups, monitoring, and provider-specific integration tests.
+The dashboard polls the API every 30 seconds. Cloudflare Logpush ingestion is implemented, but it will show no Cloudflare events until a `firewall_events` job is configured to send to a stable HTTPS endpoint with the same secret. Analysis requests and incident status changes are persisted in SQLite. Ingestion authentication does not protect the dashboard read/status endpoints; keep the complete API on a trusted local/VPN network or put it behind an authenticated reverse proxy. Production deployment still needs role-based access, audit logs, rate limiting, privacy controls, managed database backups, and monitoring.
 
 ## Evaluation and limitations
 
 Run the focused detector tests:
 
 ```powershell
-python -m unittest backend.tests.test_analyzer -v
+python -m unittest backend.tests.test_analyzer backend.tests.test_storage backend.tests.test_ingest_api backend.tests.test_cloudflare_ingest -v
 ```
 
 The tests verify the expected classes, evidence, recommendations, safe-input caveat, and score cap against synthetic examples. They are functional checks, **not** an accuracy benchmark. No labeled external dataset or measured precision/recall/F1/latency is included; claiming those metrics would be misleading. For a defensible evaluation, obtain an appropriately licensed dataset, split it by source/time to prevent leakage, set a documented threshold, and report confusion matrix, precision, recall, F1, false-positive rate, and inference latency.
@@ -91,4 +99,4 @@ The tests verify the expected classes, evidence, recommendations, safe-input cav
 
 ## GitHub
 
-The current workspace has no Git remote configured. To connect and publish it, create a GitHub repository and provide its repository URL; publishing also requires GitHub authentication in your local Git tooling. Do not put access tokens in project files or chat.
+Source repository: [soumyaranjanswain3212-sketch/CYBERGUARD](https://github.com/soumyaranjanswain3212-sketch/CYBERGUARD).

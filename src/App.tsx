@@ -386,6 +386,7 @@ function StatusBadge({ status }: { status: ThreatEvent["status"] }) {
 }
 function EventIcon({ category }: { category: string }) {
   if (category.toLowerCase().includes("account")) return <LockKeyhole size={15} />;
+  if (category.toLowerCase().includes("firewall")) return <ShieldAlert size={15} />;
   if (category.toLowerCase().includes("impersonation")) return <MessageSquareWarning size={15} />;
   if (category.toLowerCase().includes("url")) return <Globe2 size={15} />;
   if (category.toLowerCase().includes("api")) return <Network size={15} />;
