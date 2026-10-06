@@ -258,6 +258,16 @@ function App() {
     window.setTimeout(() => document.querySelector(".events-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
   }
 
+  function showAllEvents() {
+    setWorkspaceView("Threat inbox");
+    setFilter("All events");
+    setSearch("");
+    setNotice(events.length
+      ? `Showing all ${events.length} stored events.`
+      : "No events have been recorded yet. Analyze a signal to create the first real event.");
+    window.setTimeout(() => document.querySelector(".events-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
+  }
+
   if (authLoading) {
     return <div className="auth-shell"><p>Checking analyst session…</p></div>;
   }
@@ -418,7 +428,7 @@ function App() {
                 </tbody>
               </table>
             </div>
-            <div className="table-footer"><span>Showing <b>{filteredEvents.length}</b> of <b>{events.length}</b> events</span><button onClick={() => { setFilter("All events"); setSearch(""); }}>View all events <ArrowUpRight size={14} /></button></div>
+            <div className="table-footer"><span>Showing <b>{filteredEvents.length}</b> of <b>{events.length}</b> events</span><button onClick={showAllEvents}>View all events <ArrowUpRight size={14} /></button></div>
           </section>
 
           <section className="bottom-grid">
