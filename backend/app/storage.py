@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -19,8 +21,18 @@ def _connect() -> sqlite3.Connection:
     return connection
 
 
+@contextmanager
+def _connection() -> Iterator[sqlite3.Connection]:
+    connection = _connect()
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
 def initialize() -> None:
-    with _connect() as connection:
+    with _connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS events (
@@ -54,7 +66,7 @@ def _decode(row: sqlite3.Row) -> dict:
 
 
 def insert_event(event: dict) -> dict:
-    with _connect() as connection:
+    with _connection() as connection:
         connection.execute(
             """
             INSERT INTO events (
@@ -73,7 +85,7 @@ def insert_event(event: dict) -> dict:
 
 
 def list_events(limit: int = 500, offset: int = 0) -> list[dict]:
-    with _connect() as connection:
+    with _connection() as connection:
         rows = connection.execute(
             "SELECT * FROM events ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?",
             (limit, offset),
@@ -82,7 +94,7 @@ def list_events(limit: int = 500, offset: int = 0) -> list[dict]:
 
 
 def update_status(event_id: str, status: str) -> dict | None:
-    with _connect() as connection:
+    with _connection() as connection:
         result = connection.execute(
             "UPDATE events SET status = ? WHERE id = ?",
             (status, event_id),
@@ -102,17 +114,21 @@ def get_summary(now: datetime | None = None) -> dict:
     end = current + timedelta(hours=1)
     hourly = {hour.isoformat(): 0 for hour in (start + timedelta(hours=i) for i in range(24))}
 
-    with _connect() as connection:
+    with _connection() as connection:
         total = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         recent_rows = connection.execute(
             "SELECT timestamp, severity, status, category FROM events WHERE timestamp >= ? AND timestamp < ?",
             (start.isoformat(), end.isoformat()),
         ).fetchall()
+        open_events = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE status IN ('New', 'Investigating')"
+        ).fetchone()[0]
         severity_rows = connection.execute(
             "SELECT severity, COUNT(*) AS count FROM events GROUP BY severity"
         ).fetchall()
 
     severity_counts = {row["severity"]: row["count"] for row in severity_rows}
+    recent_severity_counts: dict[str, int] = {}
     category_counts: dict[str, int] = {}
     for row in recent_rows:
         event_time = (
@@ -123,6 +139,9 @@ def get_summary(now: datetime | None = None) -> dict:
         key = event_time.isoformat()
         if key in hourly:
             hourly[key] += 1
+        recent_severity_counts[row["severity"]] = (
+            recent_severity_counts.get(row["severity"], 0) + 1
+        )
         category_counts[row["category"]] = category_counts.get(row["category"], 0) + 1
 
     return {
@@ -131,10 +150,9 @@ def get_summary(now: datetime | None = None) -> dict:
         "high_risk_last_24h": sum(
             row["severity"] in ("Critical", "High") for row in recent_rows
         ),
-        "open_events": sum(
-            row["status"] in ("New", "Investigating") for row in recent_rows
-        ),
+        "open_events": open_events,
         "severity_counts": severity_counts,
+        "severity_counts_last_24h": recent_severity_counts,
         "category_counts": [
             {"category": category, "count": count}
             for category, count in sorted(

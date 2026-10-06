@@ -2,6 +2,11 @@ import type { AnalysisInput, DashboardSummary, ThreatEvent } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export async function checkHealth(): Promise<boolean> {
+  const response = await fetch(`${API_BASE}/health`);
+  return response.ok;
+}
+
 async function readError(response: Response): Promise<Error> {
   const body = (await response.json().catch(() => null)) as { detail?: string } | null;
   return new Error(body?.detail ?? `Request failed (${response.status})`);

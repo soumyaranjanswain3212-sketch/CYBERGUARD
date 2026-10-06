@@ -9,8 +9,8 @@ CyberGuard is a student-built cybersecurity monitoring prototype for **authorize
 - Analyze email/message text, a URL, an identity/media concern, or sign-in signals.
 - Classify signals into credential phishing, suspicious URL, impersonation/deepfake concern, or account takeover.
 - Return a 0–100 heuristic risk score, severity, matched indicators, explanation, and suggested next actions.
-- Browse seeded, simulated incidents in a monitoring dashboard; search and filter them, inspect evidence, and update incident status.
-- View a threat activity chart, category breakdown, live activity timeline, and API/demo mode status.
+- Browse incidents created by analysis requests and persisted in SQLite; search and filter them, inspect evidence, and update incident status.
+- View event totals, hourly activity, category breakdown, and recent analyses, all derived from the API's persisted event records.
 - Run the API and UI locally with separate development servers.
 
 ## Start locally
@@ -33,7 +33,7 @@ python -m pip install -r backend\requirements.txt
 python -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
-Open `http://localhost:5173`. The API is documented at `http://localhost:8000/docs`. Without the API, the UI continues to show seeded demo events; submitting an analysis requires the API.
+Open `http://localhost:5173`. The API is documented at `http://localhost:8000/docs`. The dashboard requires the API and displays no seeded or simulated incidents. Analysis events are stored in SQLite at `backend/cyberguard.sqlite3` by default; set `CYBERGUARD_DB_PATH` to choose another location.
 
 Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_CORS_ORIGINS` to a comma-separated list of trusted frontend origins. Never expose the development server or allow wildcard CORS on a public deployment.
 
@@ -41,7 +41,7 @@ Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_COR
 
 The backend applies readable keyword and URL-structure checks—urgency, credential requests, authority references, payment requests, shortened/punycode/multi-hyphen/IP-literal or long domains, plus failed logins, unfamiliar devices, and unusual locations. Indicator weights are added and capped at 100. Severity bands are Safe (0–14), Low (15–39), Medium (40–64), High (65–84), and Critical (85–100).
 
-The service returns the evidence that contributed to its score. Some message rules overlap intentionally, so this score is a triage signal, not a calibrated probability. No email headers, DNS/WHOIS, browser redirects, image/audio/video bytes, threat-intelligence feeds, or user baselines are fetched or analyzed. The UI's sample aggregate counters and chart are illustrative demo data, not calculated operational telemetry.
+The service returns the evidence that contributed to its score. Some message rules overlap intentionally, so this score is a triage signal, not a calibrated probability. No email headers, DNS/WHOIS, browser redirects, image/audio/video bytes, threat-intelligence feeds, or user baselines are fetched or analyzed. Dashboard counters and charts are calculated from records in the configured SQLite database; an empty database produces an empty dashboard.
 
 ## Architecture
 
@@ -59,7 +59,7 @@ FastAPI API ── Pydantic input validation
   └── Explanation, indicators, recommended actions
 ```
 
-The demo event feed is in-memory simulated data. Analysis responses are not persisted. The backend is stateless and can be containerized and scaled horizontally behind a TLS-terminating reverse proxy; production deployment would need durable event storage, authentication/authorization, audit logs, rate limiting, secrets management, privacy controls, and monitoring.
+The dashboard polls the API every 30 seconds; this is not a connection to external mail, identity, endpoint, or network telemetry sources. Analysis requests and incident status changes are persisted in SQLite. The backend can be containerized behind a TLS-terminating reverse proxy; production deployment would still need authenticated ingestion, authorization, audit logs, rate limiting, secrets management, privacy controls, managed database backups, and monitoring. The API must remain on a trusted network until those controls are implemented.
 
 ## Evaluation and limitations
 

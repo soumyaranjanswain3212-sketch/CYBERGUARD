@@ -30,6 +30,7 @@ export type DashboardSummary = {
   high_risk_last_24h: number;
   open_events: number;
   severity_counts: Partial<Record<Severity, number>>;
+  severity_counts_last_24h: Partial<Record<Severity, number>>;
   category_counts: { category: string; count: number }[];
   hourly_counts: { hour: string; count: number }[];
 };

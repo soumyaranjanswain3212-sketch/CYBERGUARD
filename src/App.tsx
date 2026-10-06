@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity, AlertOctagon, ArrowDownRight, ArrowUpRight, Bell, ChevronDown,
+  Activity, AlertOctagon, ArrowUpRight, Bell, ChevronDown,
   CircleHelp, Clock3, Command, FileSearch, Fingerprint, Globe2, LayoutDashboard,
   LockKeyhole, Menu, MessageSquareWarning, MoreHorizontal, Network, Plus,
   Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles,
-  UserRound, X,
+  X,
 } from "lucide-react";
-import { activity as demoActivity, initialEvents } from "./data";
-import { analyzeEvent, checkHealth, getEvents } from "./api";
-import type { AnalysisInput, Severity, ThreatEvent } from "./types";
+import { analyzeEvent, checkHealth, getEvents, getSummary, updateEventStatus } from "./api";
+import type { AnalysisInput, DashboardSummary, Severity, ThreatEvent } from "./types";
 
 const navItems = [
   { label: "Overview", icon: LayoutDashboard },
-  { label: "Threat inbox", icon: ShieldAlert, count: "12" },
+  { label: "Threat inbox", icon: ShieldAlert },
   { label: "Identity & access", icon: Fingerprint },
   { label: "URL analysis", icon: Globe2 },
   { label: "Investigations", icon: FileSearch },
@@ -27,15 +26,18 @@ function timeLabel(value: string) {
 }
 
 function App() {
-  const [events, setEvents] = useState(initialEvents);
+  const [events, setEvents] = useState<ThreatEvent[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [filter, setFilter] = useState("All events");
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<ThreatEvent | null>(initialEvents[0]);
+  const [selected, setSelected] = useState<ThreatEvent | null>(null);
   const [showAnalyzer, setShowAnalyzer] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
+  const [dashboardError, setDashboardError] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
   const [input, setInput] = useState<AnalysisInput>({
     source: "email",
     content: "",
@@ -43,23 +45,26 @@ function App() {
     url: "",
   });
 
+  async function refreshDashboard() {
+    try {
+      const healthy = await checkHealth();
+      if (!healthy) throw new Error("CyberGuard API is unavailable.");
+      const [remoteEvents, remoteSummary] = await Promise.all([getEvents(), getSummary()]);
+      setEvents(remoteEvents);
+      setSummary(remoteSummary);
+      setApiOnline(true);
+      setDashboardError("");
+    } catch (reason) {
+      setApiOnline(false);
+      setDashboardError(reason instanceof Error ? reason.message : "Unable to refresh dashboard data.");
+    }
+  }
+
   useEffect(() => {
     let active = true;
     const refresh = async () => {
-      const healthy = await checkHealth();
-      if (active) setApiOnline(healthy);
-      if (!healthy) return;
-      try {
-        const remoteEvents = await getEvents();
-        if (active && remoteEvents.length) {
-          setEvents((current) => {
-            const added = remoteEvents.filter((item) => !current.some((event) => event.id === item.id));
-            return [...added, ...current];
-          });
-        }
-      } catch {
-        if (active) setApiOnline(false);
-      }
+      if (!active) return;
+      await refreshDashboard();
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
@@ -78,20 +83,60 @@ function App() {
     }).sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || b.timestamp.localeCompare(a.timestamp));
   }, [events, filter, search]);
 
-  const threats = events.filter((event) => event.severity === "Critical" || event.severity === "High").length;
+  const highRiskEvents = (summary?.severity_counts_last_24h.Critical ?? 0) + (summary?.severity_counts_last_24h.High ?? 0);
+  const recentEvents = events.slice(0, 5);
+  const categoryBreakdown = useMemo(() => {
+    const categories = summary?.category_counts ?? [];
+    const total = categories.reduce((sum, item) => sum + item.count, 0);
+    if (!total) return [];
+    const leading = categories.slice(0, 3).map((item) => ({ ...item, label: item.category }));
+    const remaining = categories.slice(3).reduce((sum, item) => sum + item.count, 0);
+    if (remaining) leading.push({ category: "Other", label: "Other", count: remaining });
+    return leading.map((item, index) => ({
+      ...item,
+      color: ["#e27069", "#d9a34b", "#6b94c2", "#7e778f"][index],
+      percent: Math.round((item.count / total) * 100),
+    }));
+  }, [summary]);
+  const categoryGradient = useMemo(() => {
+    let position = 0;
+    const stops = categoryBreakdown.map((item) => {
+      const start = position;
+      position += item.percent;
+      return `${item.color} ${start}% ${position}%`;
+    });
+    return stops.length ? `conic-gradient(${stops.join(", ")})` : "#26313e";
+  }, [categoryBreakdown]);
+  const maxHourlyCount = Math.max(1, ...(summary?.hourly_counts.map((item) => item.count) ?? []));
+  const hourlyPoints = (summary?.hourly_counts ?? []).map((item, index, all) => {
+    const x = all.length <= 1 ? 360 : (index / (all.length - 1)) * 720;
+    const y = 166 - (item.count / maxHourlyCount) * 140;
+    return `${x},${y}`;
+  }).join(" ");
+  const hourlyArea = hourlyPoints ? `0,182 ${hourlyPoints} 720,182` : "";
 
   async function submitAnalysis(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setAnalyzing(true);
     try {
-      if (!input.content.trim() && !input.url?.trim()) throw new Error("Add message content or a URL to analyze.");
+      if (input.source !== "auth" && !input.content.trim() && !input.url?.trim()) {
+        throw new Error("Add message content or a URL to analyze.");
+      }
       const result = await analyzeEvent(input);
       setEvents((current) => [result, ...current]);
+      setSummary((current) => current ? {
+        ...current,
+        total_events: current.total_events + 1,
+        events_last_24h: current.events_last_24h + 1,
+        high_risk_last_24h: current.high_risk_last_24h + (result.severity === "Critical" || result.severity === "High" ? 1 : 0),
+        open_events: current.open_events + 1,
+      } : current);
       setSelected(result);
       setShowAnalyzer(false);
       setInput({ source: "email", content: "", sender: "", url: "" });
       setApiOnline(true);
+      void refreshDashboard();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Analysis could not be completed.");
     } finally {
@@ -99,9 +144,19 @@ function App() {
     }
   }
 
-  function updateStatus(id: string, status: ThreatEvent["status"]) {
-    setEvents((current) => current.map((event) => event.id === id ? { ...event, status } : event));
-    setSelected((current) => current?.id === id ? { ...current, status } : current);
+  async function updateStatus(id: string, status: ThreatEvent["status"]) {
+    setSavingStatus(true);
+    setDashboardError("");
+    try {
+      const updated = await updateEventStatus(id, status);
+      setEvents((current) => current.map((event) => event.id === id ? updated : event));
+      setSelected((current) => current?.id === id ? updated : current);
+      void refreshDashboard();
+    } catch (reason) {
+      setDashboardError(reason instanceof Error ? reason.message : "Incident status could not be saved.");
+    } finally {
+      setSavingStatus(false);
+    }
   }
 
   return (
@@ -115,14 +170,14 @@ function App() {
         </div>
         <div className="workspace-switch">
           <div className="workspace-avatar">N</div>
-          <div className="workspace-copy"><b>Northstar Labs</b><span>Security workspace</span></div>
+          <div className="workspace-copy"><b>Local workspace</b><span>Security workspace</span></div>
           <ChevronDown size={15} className="muted-icon" />
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navItems.map(({ label, icon: Icon, count }) => (
+          {navItems.map(({ label, icon: Icon }) => (
             <button key={label} className={`nav-item ${label === "Overview" ? "active" : ""}`} onClick={() => setMobileNav(false)}>
-              <Icon size={17} strokeWidth={1.8} /><span>{label}</span>{count && <small>{count}</small>}
+              <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
             </button>
           ))}
         </nav>
@@ -135,12 +190,12 @@ function App() {
           <b>Analyst preview</b>
           <p>Signals are scored with explainable prototype rules.</p>
           <div className="plan-progress"><span /></div>
-          <div className="plan-caption"><span>DEMO MODE</span><span>01 / 03</span></div>
+          <div className="plan-caption"><span>RULE-BASED</span><span>v1.0</span></div>
         </div>
         <button className="nav-item bottom-nav"><CircleHelp size={17} strokeWidth={1.8} /><span>Help & documentation</span></button>
         <div className="profile">
           <div className="profile-avatar">AS</div>
-          <div className="profile-copy"><b>Alex Morgan</b><span>Security analyst</span></div>
+          <div className="profile-copy"><b>Analyst</b><span>Local session</span></div>
           <MoreHorizontal size={18} className="muted-icon" />
         </div>
       </aside>
@@ -150,78 +205,66 @@ function App() {
           <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><b>Overview</b></div>
           <div className="topbar-right">
-            <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "Engine connected" : "Demo data"}<span className="status-separator" />Live</div>
+            <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API connected" : "API offline"}<span className="status-separator" />30s refresh</div>
             <button className="icon-button top-search" aria-label="Search"><Search size={17} /></button>
             <button className="icon-button notification-button" aria-label="Notifications"><Bell size={17} /><i /></button>
-            <div className="top-avatar">AM</div>
+            <div className="top-avatar">A</div>
           </div>
         </header>
 
         <div className="content">
           <section className="page-heading">
             <div>
-              <div className="eyebrow"><span className="eyebrow-line" />TUESDAY, OCTOBER 6, 2026</div>
+              <div className="eyebrow"><span className="eyebrow-line" />{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date()).toUpperCase()}</div>
               <h1>Security overview</h1>
-              <p className="heading-subtitle">Here's what's happening across your environment today.</p>
+              <p className="heading-subtitle">Persisted analysis events from this CyberGuard instance.</p>
             </div>
             <button className="primary-button" onClick={() => { setError(""); setShowAnalyzer(true); }}>
               <Plus size={17} /> Analyze an event <span className="shortcut">⌘ K</span>
             </button>
           </section>
+          {dashboardError && <div className="connection-warning" role="status">{dashboardError} {summary ? "Showing the last data successfully loaded." : "No dashboard data has been loaded."}</div>}
 
           <section className="metrics-grid" aria-label="Security metrics">
-            <Metric icon={<Activity size={17} />} label="Events analyzed" value="2,847" delta="+12.8%" positive detail="vs. previous 24h" />
-            <Metric icon={<ShieldAlert size={17} />} label="Threats detected" value={String(threats + 34)} delta="+4.2%" detail="vs. previous 24h" />
-            <Metric icon={<LockKeyhole size={17} />} label="High risk blocked" value="28" delta="3 pending" detail="needs analyst review" warning />
-            <Metric icon={<UserRound size={17} />} label="Users protected" value="1,204" delta="98.6%" positive detail="of active users" />
+            <Metric icon={<Activity size={17} />} label="Events analyzed" value={String(summary?.events_last_24h ?? 0)} detail="Last 24 hours" />
+            <Metric icon={<ShieldAlert size={17} />} label="High-risk events" value={String(highRiskEvents)} detail="Critical and High, last 24h" />
+            <Metric icon={<LockKeyhole size={17} />} label="Open incidents" value={String(summary?.open_events ?? 0)} detail="New or investigating" />
+            <Metric icon={<Clock3 size={17} />} label="All-time events" value={String(summary?.total_events ?? 0)} detail="Persisted analysis records" />
           </section>
 
           <section className="middle-grid">
             <div className="panel trend-panel">
               <div className="panel-heading">
-                <div><h2>Threat activity</h2><p>Detection volume across the last 24 hours</p></div>
+                <div><h2>Event activity</h2><p>Persisted analyses by hour, last 24 hours</p></div>
                 <button className="select-button">Last 24 hours <ChevronDown size={14} /></button>
               </div>
               <div className="chart-legend">
-                <span><i className="legend-dot phishing" />Phishing</span>
-                <span><i className="legend-dot identity" />Identity</span>
-                <span><i className="legend-dot endpoint" />Endpoint</span>
-                <b><span className="live-pulse" /> LIVE</b>
+                <span><i className="legend-dot phishing" />Analyzed events</span>
+                <b><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API DATA" : "OFFLINE"}</b>
               </div>
               <div className="chart-area">
-                <div className="chart-y-labels"><span>40</span><span>30</span><span>20</span><span>10</span><span>0</span></div>
+                <div className="chart-y-labels">{[1, 0.75, 0.5, 0.25, 0].map((fraction) => <span key={fraction}>{Math.ceil(maxHourlyCount * fraction)}</span>)}</div>
                 <div className="chart-plot">
                   <div className="grid-lines"><i /><i /><i /><i /><i /></div>
-                  <svg className="trend-chart" viewBox="0 0 720 182" preserveAspectRatio="none" role="img" aria-label="Threat activity trend chart">
-                    <defs>
-                      <linearGradient id="fill-a" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#e56c66" stopOpacity=".2" /><stop offset="100%" stopColor="#e56c66" stopOpacity="0" /></linearGradient>
-                      <linearGradient id="fill-b" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#d5a44b" stopOpacity=".14" /><stop offset="100%" stopColor="#d5a44b" stopOpacity="0" /></linearGradient>
-                    </defs>
-                    <path d="M0 143 C35 138 45 148 72 139 S108 126 144 135 S178 119 216 124 S250 132 288 117 S324 100 360 111 S396 96 432 101 S468 70 504 88 S540 98 576 78 S612 84 648 59 S684 74 720 41 L720 182 L0 182Z" fill="url(#fill-a)" />
-                    <path d="M0 157 C38 153 44 157 72 151 S108 144 144 150 S180 145 216 146 S252 136 288 143 S324 128 360 137 S396 131 432 126 S468 122 504 128 S540 112 576 118 S612 101 648 108 S684 94 720 99 L720 182 L0 182Z" fill="url(#fill-b)" />
-                    <path d="M0 143 C35 138 45 148 72 139 S108 126 144 135 S178 119 216 124 S250 132 288 117 S324 100 360 111 S396 96 432 101 S468 70 504 88 S540 98 576 78 S612 84 648 59 S684 74 720 41" fill="none" stroke="#e56c66" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-                    <path d="M0 157 C38 153 44 157 72 151 S108 144 144 150 S180 145 216 146 S252 136 288 143 S324 128 360 137 S396 131 432 126 S468 122 504 128 S540 112 576 118 S612 101 648 108 S684 94 720 99" fill="none" stroke="#d5a44b" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-                    <path d="M0 169 C38 166 48 172 72 168 S108 164 144 166 S180 157 216 163 S252 167 288 157 S324 162 360 154 S396 159 432 149 S468 153 504 145 S540 150 576 142 S612 146 648 135 S684 142 720 130" fill="none" stroke="#6a8fbe" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
-                    <circle cx="648" cy="59" r="4" fill="#0f151e" stroke="#e56c66" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                  <svg className="trend-chart" viewBox="0 0 720 182" preserveAspectRatio="none" role="img" aria-label="Persisted analysis events by hour">
+                    {hourlyArea && <polygon points={hourlyArea} fill="#e2706930" />}
+                    {hourlyPoints && <polyline points={hourlyPoints} fill="none" stroke="#e27069" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />}
                   </svg>
-                  <div className="chart-x-labels"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>Now</span></div>
+                  <div className="chart-x-labels">{(summary?.hourly_counts ?? []).filter((_, index) => index % 4 === 0).map((item) => <span key={item.hour}>{timeLabel(item.hour)}</span>)}</div>
                 </div>
               </div>
             </div>
             <div className="panel breakdown-panel">
               <div className="panel-heading">
-                <div><h2>Threat breakdown</h2><p>By detection category</p></div>
+                <div><h2>Event breakdown</h2><p>By category, last 24 hours</p></div>
                 <button className="icon-button small-icon" aria-label="More options"><MoreHorizontal size={18} /></button>
               </div>
               <div className="donut-wrap">
-                <div className="donut"><div><strong>34</strong><span>threats</span></div></div>
-                <div className="donut-center-label"><small>THIS WEEK</small><span>+8.4%</span></div>
+                <div className="donut" style={{ background: categoryGradient }}><div><strong>{(summary?.category_counts ?? []).reduce((sum, item) => sum + item.count, 0)}</strong><span>events</span></div></div>
               </div>
               <div className="breakdown-legend">
-                <Breakdown label="Phishing" percent="41%" value="14" color="phishing" />
-                <Breakdown label="Identity fraud" percent="26%" value="9" color="identity" />
-                <Breakdown label="Endpoint" percent="21%" value="7" color="endpoint" />
-                <Breakdown label="Other" percent="12%" value="4" color="other" />
+                {categoryBreakdown.map((item) => <Breakdown key={item.label} label={item.label} percent={`${item.percent}%`} value={String(item.count)} color={item.color} />)}
+                {!categoryBreakdown.length && <p className="no-category-data">No category data yet.</p>}
               </div>
             </div>
           </section>
@@ -263,19 +306,20 @@ function App() {
 
           <section className="bottom-grid">
             <div className="panel activity-panel">
-              <div className="panel-heading"><div><h2>Live activity</h2><p>Latest signals from your environment</p></div><span className="stream-tag"><span className="live-pulse" /> STREAMING</span></div>
+              <div className="panel-heading"><div><h2>Recent analyses</h2><p>Latest events stored by this instance</p></div><span className="stream-tag"><span className={`status-dot ${apiOnline ? "online" : ""}`} /> POLL 30S</span></div>
               <div className="activity-list">
-                {demoActivity.map((item) => <div className="activity-item" key={item.time}><span className={`activity-marker ${item.kind}`} /><span className="activity-time">{item.time}</span><span className="activity-label">{item.label}</span><ArrowUpRight size={13} className="activity-arrow" /></div>)}
+                {recentEvents.map((item) => <div className="activity-item" key={item.id}><span className={`activity-marker ${item.severity === "Critical" || item.severity === "High" ? "danger" : item.severity === "Medium" ? "warning" : "info"}`} /><span className="activity-time">{timeLabel(item.timestamp)}</span><span className="activity-label">{item.subject}</span><ArrowUpRight size={13} className="activity-arrow" /></div>)}
+                {!recentEvents.length && <div className="empty-activity">No analyzed events have been recorded.</div>}
               </div>
             </div>
             <div className="panel response-panel">
               <div className="response-icon"><ShieldCheck size={19} /></div>
-              <div><span className="response-kicker">RESPONSE POSTURE</span><h3>You're in good hands.</h3><p>28 high-risk events were contained automatically. 3 need your review.</p><button onClick={() => setFilter("High")}>Review priority queue <ArrowUpRight size={14} /></button></div>
+              <div><span className="response-kicker">RESPONSE POSTURE</span><h3>Analyst review queue</h3><p>{summary?.open_events ?? 0} open incidents. CyberGuard records recommendations; it does not take response actions automatically.</p><button onClick={() => setFilter("High")}>Review high-risk events <ArrowUpRight size={14} /></button></div>
               <div className="response-watermark"><Shield size={95} /></div>
             </div>
           </section>
 
-          <footer className="app-footer"><span><Command size={12} /> CyberGuard <i /> Analyst preview <i /> 1.0.0</span><span>DETECTION ENGINE <b className={apiOnline ? "footer-online" : ""}>{apiOnline ? "CONNECTED" : "DEMO MODE"}</b><span className={`footer-dot ${apiOnline ? "online" : ""}`} /></span></footer>
+          <footer className="app-footer"><span><Command size={12} /> CyberGuard <i /> Rule-based prototype <i /> 1.0.0</span><span>API <b className={apiOnline ? "footer-online" : ""}>{apiOnline ? "CONNECTED" : "OFFLINE"}</b><span className={`footer-dot ${apiOnline ? "online" : ""}`} /></span></footer>
         </div>
       </main>
 
@@ -291,8 +335,8 @@ function App() {
           <div className="event-meta"><span><Clock3 size={13} /> Detected {timeLabel(selected.timestamp)}</span><span><Globe2 size={13} /> {selected.source}</span></div>
         </div>
         <div className="drawer-actions">
-          {selected.status !== "Resolved" ? <button className="primary-button drawer-primary" onClick={() => updateStatus(selected.id, "Resolved")}><ShieldCheck size={16} /> Mark as resolved</button> : <button className="resolved-button" disabled><ShieldCheck size={16} /> Incident resolved</button>}
-          <button className="secondary-button" onClick={() => updateStatus(selected.id, selected.status === "Investigating" ? "New" : "Investigating")}>{selected.status === "Investigating" ? "Move to new" : "Start investigation"}</button>
+          {selected.status !== "Resolved" ? <button className="primary-button drawer-primary" disabled={savingStatus || !apiOnline} onClick={() => void updateStatus(selected.id, "Resolved")}><ShieldCheck size={16} /> {savingStatus ? "Saving…" : "Mark as resolved"}</button> : <button className="resolved-button" disabled><ShieldCheck size={16} /> Incident resolved</button>}
+          <button className="secondary-button" disabled={savingStatus || !apiOnline} onClick={() => void updateStatus(selected.id, selected.status === "Investigating" ? "New" : "Investigating")}>{selected.status === "Investigating" ? "Move to new" : "Start investigation"}</button>
         </div>
       </aside>}
 
@@ -313,11 +357,11 @@ function App() {
   );
 }
 
-function Metric({ icon, label, value, delta, detail, positive, warning }: { icon: React.ReactNode; label: string; value: string; delta: string; detail: string; positive?: boolean; warning?: boolean }) {
-  return <div className="metric-card"><div className="metric-top"><span className="metric-icon">{icon}</span><span className="metric-label">{label}</span><button className="metric-more" aria-label={`${label} details`}><MoreHorizontal size={16} /></button></div><div className="metric-value">{value}</div><div className="metric-bottom"><span className={`metric-delta ${positive ? "positive" : warning ? "caution" : ""}`}>{positive ? <ArrowUpRight size={13} /> : warning ? <Clock3 size={12} /> : <ArrowDownRight size={13} />}{delta}</span><span>{detail}</span></div></div>;
+function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) {
+  return <div className="metric-card"><div className="metric-top"><span className="metric-icon">{icon}</span><span className="metric-label">{label}</span></div><div className="metric-value">{value}</div><div className="metric-bottom"><span>{detail}</span></div></div>;
 }
 function Breakdown({ label, percent, value, color }: { label: string; percent: string; value: string; color: string }) {
-  return <div className="breakdown-row"><span className={`legend-dot ${color}`} /><span className="breakdown-name">{label}</span><span className="breakdown-percent">{percent}</span><b>{value}</b></div>;
+  return <div className="breakdown-row"><span className="legend-dot" style={{ background: color }} /><span className="breakdown-name">{label}</span><span className="breakdown-percent">{percent}</span><b>{value}</b></div>;
 }
 function SeverityBadge({ severity }: { severity: Severity }) {
   return <span className={`severity-badge ${severity.toLowerCase()}`}><i />{severity}</span>;

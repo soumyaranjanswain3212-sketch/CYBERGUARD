@@ -75,6 +75,7 @@ button { color: inherit; cursor: pointer; }
 h1,h2,h3,p { margin-top: 0; }
 .page-heading h1 { margin: 8px 0 5px; color: #eff3f8; letter-spacing: -1.2px; font: 700 25px Manrope, sans-serif; }
 .heading-subtitle { margin: 0; color: #8894a3; font-size: 11px; }
+.connection-warning { margin: -10px 0 14px; padding: 9px 11px; border: 1px solid #5a3e2c; border-radius: 6px; background: #2a201a; color: #e2b478; font-size: 10px; }
 .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; min-height: 34px; border: 1px solid #5ca67e; border-radius: 6px; background: #5aa47c; color: #07130d; font-size: 10px; font-weight: 700; transition: background .15s, transform .15s; white-space: nowrap; }
 .primary-button:hover { background: #74bc94; transform: translateY(-1px); }
 .primary-button:disabled { opacity: .65; cursor: wait; }
@@ -125,6 +126,7 @@ h1,h2,h3,p { margin-top: 0; }
 .donut-center-label { position: absolute; top: 7px; right: calc(50% - 75px); display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .donut-center-label small { color: #657487; font: 7px "DM Mono", monospace; }
 .donut-center-label span { color: #66c995; font: 8px "DM Mono", monospace; }
+.no-category-data { grid-column: 1 / -1; margin: 0; color: #778596; font-size: 9px; }
 .breakdown-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .breakdown-row { gap: 6px; color: #a2adba; font-size: 9px; min-width: 0; }
 .breakdown-name { white-space: nowrap; }
@@ -187,6 +189,7 @@ tbody tr:hover,.selected-row { background: #151f2a; }
 .activity-panel,.response-panel { min-height: 174px; padding: 14px 16px; }
 .stream-tag { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #2b3b34; border-radius: 4px; color: #72c998; font: 8px "DM Mono", monospace; }
 .activity-list { margin-top: 11px; }
+.empty-activity { padding: 7px 0; color: #778596; font-size: 9px; }
 .activity-item { height: 23px; display: grid; grid-template-columns: 8px 37px 1fr 13px; align-items: center; gap: 7px; }
 .activity-marker { width: 6px; height: 6px; border-radius: 50%; background: #e27670; box-shadow: 0 0 0 3px #e2767020; }
 .activity-marker.warning { background: #d6a34d; box-shadow: 0 0 0 3px #d6a34d20; }.activity-marker.info { background: #6e94bd; box-shadow: 0 0 0 3px #6e94bd20; }
