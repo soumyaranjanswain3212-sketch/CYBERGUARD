@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
 from .analyzer import analyze_event
@@ -13,7 +16,7 @@ from .analyzer import analyze_event
 app = FastAPI(
     title="CyberGuard Threat Analysis API",
     description="Analyze and persist security events for an authorized local deployment.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 origins = os.getenv(
@@ -42,6 +45,30 @@ class AnalyzeRequest(BaseModel):
     bytes_out_mb: float | None = Field(default=None, ge=0, le=1_000_000_000)
     baseline_bytes_out_mb: float | None = Field(default=None, gt=0, le=1_000_000_000)
     error_rate_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class TelemetryIngestRequest(AnalyzeRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["auth", "email", "identity", "network", "url"]
+    source_name: str = Field(min_length=1, max_length=80)
+    source_event_id: str = Field(min_length=1, max_length=200)
+    observed_at: datetime
+
+    @field_validator("source_name", "source_event_id")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Value must not be blank.")
+        return normalized
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone.")
+        return value.astimezone(UTC)
 
 
 class StatusUpdate(BaseModel):
@@ -78,8 +105,7 @@ def update_event(event_id: str, request: StatusUpdate) -> dict:
     return event
 
 
-@app.post("/api/analyze")
-def analyze(request: AnalyzeRequest) -> dict:
+def _validate_analysis_input(request: AnalyzeRequest) -> None:
     source = request.source.casefold()
     if source == "network":
         if request.requests_per_minute is None and request.bytes_out_mb is None and request.error_rate_percent is None:
@@ -99,5 +125,49 @@ def analyze(request: AnalyzeRequest) -> dict:
             )
     elif not request.content.strip() and not (request.url or "").strip() and source != "auth":
         raise HTTPException(status_code=422, detail="Provide message content or a URL to analyze.")
+
+
+def _check_ingest_authorization(authorization: str | None) -> None:
+    expected_token = os.getenv("CYBERGUARD_INGEST_TOKEN", "")
+    if len(expected_token) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Authenticated ingestion is not configured. Set CYBERGUARD_INGEST_TOKEN to a random secret of at least 32 characters.",
+        )
+    scheme, separator, supplied_token = (authorization or "").partition(" ")
+    if (
+        not separator
+        or scheme.casefold() != "bearer"
+        or not hmac.compare_digest(
+            supplied_token.encode("utf-8"),
+            expected_token.encode("utf-8"),
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="A valid bearer token is required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@app.post("/api/ingest", status_code=202)
+def ingest_telemetry(
+    request: TelemetryIngestRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _check_ingest_authorization(authorization)
+    _validate_analysis_input(request)
+
+    event = analyze_event(request.model_dump())
+    stable_key = f"{request.source_name.casefold()}:{request.source_event_id}"
+    event["id"] = f"ING-{hashlib.sha256(stable_key.encode('utf-8')).hexdigest().upper()}"
+    event["timestamp"] = request.observed_at.isoformat()
+    event["source"] = request.source_name
+    return storage.insert_event(event)
+
+
+@app.post("/api/analyze")
+def analyze(request: AnalyzeRequest) -> dict:
+    _validate_analysis_input(request)
     event = analyze_event(request.model_dump())
     return storage.insert_event(event)

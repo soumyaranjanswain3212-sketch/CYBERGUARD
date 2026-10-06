@@ -56,14 +56,14 @@ class AnalyzerTests(unittest.TestCase):
             "source": "network",
             "requests_per_minute": 1200,
             "baseline_requests_per_minute": 100,
-            "bytes_out_mb": 90,
+            "bytes_out_mb": 120,
             "baseline_bytes_out_mb": 10,
             "error_rate_percent": 55,
         })
 
         self.assertEqual(result["category"], "Network / API anomaly")
         self.assertEqual(result["severity"], "Critical")
-        self.assertEqual(result["score"], 95)
+        self.assertEqual(result["score"], 100)
         self.assertTrue(any("12.0x" in item for item in result["indicators"]))
         self.assertIn(
             "Review outbound data destinations and investigate possible exfiltration",

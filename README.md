@@ -37,9 +37,19 @@ Open `http://localhost:5173`. The API is documented at `http://localhost:8000/do
 
 Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_CORS_ORIGINS` to a comma-separated list of trusted frontend origins. Never expose the development server or allow wildcard CORS on a public deployment.
 
+## Authorized webhook ingestion
+
+`POST /api/ingest` accepts a normalized event from an authorized firewall, EDR, or application/API feed. The sender must map its event into the contract below; this endpoint does not connect to or fetch data from a vendor by itself.
+
+Configure a high-entropy `CYBERGUARD_INGEST_TOKEN` in the API server's secret manager or process environment. Tokens shorter than 32 characters disable ingestion. Send it as an `Authorization: Bearer <token>` header. Generate a token locally with `python -c "import secrets; print(secrets.token_urlsafe(48))"`; do not commit it or paste it into chat. The development API uses localhost by default. For a remote event sender, put the API behind a TLS reverse proxy and firewall that allows only the authorized sender; do not expose the development server directly to the internet.
+
+Required fields are `source` (`network`, `auth`, `email`, `identity`, or `url`), `source_name` (the trusted integration label), `source_event_id` (stable ID from the sender), and timezone-aware `observed_at`. Other accepted fields are the same validated analysis fields used by `/api/analyze`. Network measurements include `requests_per_minute` with `baseline_requests_per_minute`, `bytes_out_mb` with `baseline_bytes_out_mb`, and/or `error_rate_percent`. A value/baseline pair must be supplied together. Unknown fields are rejected. Repeated delivery of the same source name and event ID is idempotent; the external event ID is hashed for the stored CyberGuard ID and the raw webhook payload is not retained.
+
+The endpoint returns HTTP 202 and the persisted analysis event. It reports a risk assessment, not an automatic block or containment action. Provider-specific field mapping, sender-side retries, time synchronization, and delivery monitoring must be configured and tested with the actual authorized feed before operational use.
+
 ## Detection method and scoring
 
-The backend applies readable keyword and URL-structure checks—urgency, credential requests, authority references, payment requests, shortened/punycode/multi-hyphen/IP-literal or long domains, plus failed logins, unfamiliar devices, and unusual locations. For network/API reports, request or outbound-data volume at 2x, 3x, and 10x the supplied baseline adds increasing risk; API error rates at 25% and 50% also add risk. Those thresholds are configurable in code and are not learned from observed traffic. Indicator weights are added and capped at 95. Severity bands are Safe (0–14), Low (15–39), Medium (40–64), High (65–84), and Critical (85–95).
+The backend applies readable keyword and URL-structure checks—urgency, credential requests, authority references, payment requests, shortened/punycode/multi-hyphen/IP-literal or long domains, plus failed logins, unfamiliar devices, and unusual locations. For network/API reports, request or outbound-data volume at 2x, 3x, and 10x the supplied baseline adds increasing risk; API error rates at 25% and 50% also add risk. Those thresholds are configurable in code and are not learned from observed traffic. Indicator weights are added and capped at 100. Severity bands are Safe (0–14), Low (15–39), Medium (40–64), High (65–84), and Critical (85–100).
 
 The service returns the evidence that contributed to its score. Some message rules overlap intentionally, so this score is a triage signal, not a calibrated probability. No email headers, DNS/WHOIS, browser redirects, image/audio/video bytes, threat-intelligence feeds, or user baselines are fetched or analyzed. Dashboard counters and charts are calculated from records in the configured SQLite database; an empty database produces an empty dashboard.
 
@@ -59,7 +69,7 @@ FastAPI API ── Pydantic input validation
   └── Explanation, indicators, recommended actions
 ```
 
-The dashboard polls the API every 30 seconds; this is not a connection to external mail, identity, endpoint, or network telemetry sources. Analysis requests and incident status changes are persisted in SQLite. The backend can be containerized behind a TLS-terminating reverse proxy; production deployment would still need authenticated ingestion, authorization, audit logs, rate limiting, secrets management, privacy controls, managed database backups, and monitoring. The API must remain on a trusted network until those controls are implemented.
+The dashboard polls the API every 30 seconds. Authenticated webhook ingestion is available for a sender that is explicitly configured to POST the normalized event contract; no firewall, EDR, mail, or identity provider is connected until that mapping and feed are configured. Analysis requests and incident status changes are persisted in SQLite. Webhook authentication does not protect the dashboard read/status endpoints; keep the complete API on a trusted local/VPN network or put it behind an authenticated reverse proxy. Production deployment still needs role-based access, audit logs, rate limiting, privacy controls, managed database backups, monitoring, and provider-specific integration tests.
 
 ## Evaluation and limitations
 
@@ -75,7 +85,7 @@ The tests verify the expected classes, evidence, recommendations, safe-input cav
 
 1. Add a consented/labeled dataset and compare the rules baseline with a calibrated text classifier.
 2. Add safe URL reputation/redirect analysis with SSRF protections and a sandboxed fetch service.
-3. Add authenticated log ingestion and per-user/device behavioral baselines.
+3. Configure and test a provider-specific adapter to the authenticated webhook contract and establish per-user/device behavioral baselines.
 4. Evaluate dedicated audio/video deepfake models on licensed benchmarks; retain human review and uncertainty.
 5. Add role-based access, durable incident workflows, auditability, deployment hardening, and privacy retention policies.
 

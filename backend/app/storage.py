@@ -73,6 +73,7 @@ def insert_event(event: dict) -> dict:
                 id, timestamp, source, subject, category, severity, score, status,
                 summary, indicators_json, recommendations_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO NOTHING
             """,
             (
                 event["id"], event["timestamp"], event["source"], event["subject"],
@@ -81,7 +82,13 @@ def insert_event(event: dict) -> dict:
                 json.dumps(event["recommendations"]),
             ),
         )
-    return event
+        row = connection.execute(
+            "SELECT * FROM events WHERE id = ?",
+            (event["id"],),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Event insert did not produce a stored record: {event['id']}")
+    return _decode(row)
 
 
 def list_events(limit: int = 500, offset: int = 0) -> list[dict]:
