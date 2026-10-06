@@ -263,7 +263,7 @@ function App() {
     setFilter("All events");
     setSearch("");
     setNotice("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "auto" }), 0);
   }
 
   function returnToOverview() {
@@ -271,7 +271,7 @@ function App() {
     setFilter("All events");
     setSearch("");
     setNotice("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "auto" }), 0);
   }
 
   function startFirstAnalysis() {
