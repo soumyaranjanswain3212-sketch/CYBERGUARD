@@ -1,10 +1,15 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 from backend.app.url_model import (
+    DEFAULT_MODEL_PATH,
     FEATURE_NAMES,
     MODEL_VERSION,
+    _load_artifact,
     extract_url_features,
     get_url_model_status,
     score_url,
@@ -61,6 +66,25 @@ class URLModelTests(unittest.TestCase):
                 self.assertIsNotNone(assessment)
                 assert assessment is not None
                 self.assertFalse(assessment["flagged"])
+
+    def test_runtime_artifact_is_json_and_validates_model_parameters(self):
+        artifact = _load_artifact(str(DEFAULT_MODEL_PATH))
+        self.assertIsNotNone(artifact)
+        assert artifact is not None
+        self.assertEqual(artifact["model_version"], MODEL_VERSION)
+        self.assertEqual(len(artifact["classifier"]["coefficients"]), len(FEATURE_NAMES))
+
+        with tempfile.TemporaryDirectory() as directory:
+            malformed_path = Path(directory) / "invalid-model.json"
+            malformed_path.write_text(json.dumps({
+                "model_version": MODEL_VERSION,
+                "feature_names": list(FEATURE_NAMES),
+                "threshold": 0.5,
+                "scaler": {"mean": [], "scale": []},
+                "classifier": {"classes": [0, 1], "coefficients": [], "intercept": 0},
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "invalid model parameters"):
+                _load_artifact(str(malformed_path))
 
     def test_suspicious_url_is_scored_without_fetching_the_destination(self):
         assessment = score_url("http://192.0.2.10/secure-login/verify?account=password")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import math
 import os
 import re
@@ -9,11 +10,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import joblib
-import numpy as np
-
-MODEL_VERSION = "cyberguard-phiusiil-url-v1"
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "phiusiil_url_model.joblib"
+MODEL_VERSION = "cyberguard-phiusiil-url-v2"
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "phiusiil_url_model.json"
+MAX_MODEL_ARTIFACT_BYTES = 1_000_000
 SUSPICIOUS_TERMS = (
     "account", "auth", "bank", "billing", "confirm", "login", "password",
     "secure", "signin", "support", "update", "verify", "wallet",
@@ -126,16 +125,80 @@ def _load_artifact(path: str) -> dict[str, Any] | None:
     model_path = Path(path)
     if not model_path.is_file():
         return None
-    artifact = joblib.load(model_path)
+    if model_path.stat().st_size > MAX_MODEL_ARTIFACT_BYTES:
+        raise RuntimeError(f"URL model artifact at {model_path} exceeds the supported size limit.")
+    with model_path.open("r", encoding="utf-8") as model_file:
+        artifact = json.load(model_file)
     if (
         not isinstance(artifact, dict)
         or artifact.get("model_version") != MODEL_VERSION
-        or artifact.get("feature_names") != FEATURE_NAMES
-        or not 0.0 < float(artifact.get("threshold", 0)) < 1.0
-        or not hasattr(artifact.get("model"), "predict_proba")
+        or artifact.get("feature_names") != list(FEATURE_NAMES)
     ):
         raise RuntimeError(f"URL model artifact at {model_path} has an unsupported format.")
+    threshold = artifact.get("threshold")
+    scaler = artifact.get("scaler")
+    classifier = artifact.get("classifier")
+    if (
+        not _is_finite_number(threshold)
+        or not 0.0 < threshold < 1.0
+        or not isinstance(scaler, dict)
+        or not isinstance(classifier, dict)
+    ):
+        raise RuntimeError(f"URL model artifact at {model_path} has invalid model parameters.")
+    means = scaler.get("mean")
+    scales = scaler.get("scale")
+    coefficients = classifier.get("coefficients")
+    intercept = classifier.get("intercept")
+    if (
+        not _is_finite_vector(means)
+        or not _is_finite_vector(scales)
+        or not _is_finite_vector(coefficients)
+        or len(means) != len(FEATURE_NAMES)
+        or len(scales) != len(FEATURE_NAMES)
+        or len(coefficients) != len(FEATURE_NAMES)
+        or any(scale <= 0 for scale in scales)
+        or not _is_finite_number(intercept)
+        or classifier.get("classes") != [0, 1]
+    ):
+        raise RuntimeError(f"URL model artifact at {model_path} has invalid model parameters.")
     return artifact
+
+
+def _is_finite_vector(values: Any) -> bool:
+    return (
+        isinstance(values, list)
+        and all(_is_finite_number(value) for value in values)
+    )
+
+
+def _is_finite_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _phishing_probability(artifact: dict[str, Any], features: list[float]) -> float:
+    scaler = artifact["scaler"]
+    classifier = artifact["classifier"]
+    normalized_features = (
+        (value - mean) / scale
+        for value, mean, scale in zip(features, scaler["mean"], scaler["scale"], strict=True)
+    )
+    logit = math.fsum(
+        value * coefficient
+        for value, coefficient in zip(
+            normalized_features,
+            classifier["coefficients"],
+            strict=True,
+        )
+    ) + classifier["intercept"]
+    if logit >= 0:
+        return 1.0 / (1.0 + math.exp(-logit))
+    exp_logit = math.exp(logit)
+    return exp_logit / (1.0 + exp_logit)
 
 
 def get_url_model_status() -> dict[str, Any]:
@@ -156,10 +219,8 @@ def score_url(url: str) -> dict[str, Any] | None:
     artifact = _load_artifact(str(_model_path()))
     if artifact is None:
         return None
-    features = np.asarray([extract_url_features(url)], dtype=np.float64)
-    classes = list(artifact["model"].classes_)
-    phishing_index = classes.index(1)
-    phishing_score = float(artifact["model"].predict_proba(features)[0, phishing_index])
+    features = extract_url_features(url)
+    phishing_score = _phishing_probability(artifact, features)
     threshold = float(artifact["threshold"])
     return {
         "model": artifact["model_version"],

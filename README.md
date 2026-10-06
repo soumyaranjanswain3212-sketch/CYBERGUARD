@@ -114,22 +114,22 @@ Training and threshold selection are reproducible:
 python -m backend.scripts.train_url_model
 ```
 
-If the CSV is absent, the command downloads it from the official UCI `data.csv` endpoint, writes the local model to `backend/models/phiusiil_url_model.joblib`, and records metrics/provenance in `backend/models/phiusiil_url_model.metrics.json`. `GroupShuffleSplit` holds out exact UCI `Domain` values: 165,590 training rows, 23,484 validation rows, and 46,721 test rows. The operating threshold is the lowest validation threshold of at least 0.50 that keeps the validation false-positive rate at or below 0.1%; the test set remains held out. This conservative operating point was chosen after a benign-domain regression check exposed false positives at the previous F1-maximizing threshold. That small smoke check is not an accuracy benchmark or a domain allowlist. This is a within-dataset, domain-grouped evaluation—not an independent temporal or cross-provider benchmark.
+If the CSV is absent, the command downloads it from the official UCI `data.csv` endpoint, writes the local model parameters as non-executable JSON to `backend/models/phiusiil_url_model.json`, and records metrics/provenance in `backend/models/phiusiil_url_model.metrics.json`. The runtime reads and validates the JSON parameters and computes the logistic score directly; it does not unpickle or execute model code. `GroupShuffleSplit` holds out exact UCI `Domain` values: 165,590 training rows, 23,484 validation rows, and 46,721 test rows. The operating threshold is the lowest validation threshold of at least 0.50 that keeps the validation false-positive rate at or below 0.1%; the test set remains held out. This conservative operating point was chosen after a benign-domain regression check exposed false positives at the previous F1-maximizing threshold. That small smoke check is not an accuracy benchmark or a domain allowlist. This is a within-dataset, domain-grouped evaluation—not an independent temporal or cross-provider benchmark.
 
 Measured on the held-out UCI test split on this development machine:
 
 | Metric | Result |
 |---|---:|
-| Accuracy | 98.81% |
-| Precision | 99.84% |
-| Recall | 97.36% |
-| F1 | 98.58% |
+| Accuracy | 98.79% |
+| Precision | 99.83% |
+| Recall | 97.32% |
+| F1 | 98.56% |
 | ROC AUC | 99.68% |
 | Average precision | 99.72% |
 | Validation false-positive rate | 0.09% (12/13,506 legitimate URLs) |
-| Held-out test false-positive rate | 0.12% (31/26,923 legitimate URLs) |
-| Confusion matrix | TN 26,892 · FP 31 · FN 523 · TP 19,275 |
-| URL feature + model inference latency | p50 0.85 ms · p95 2.51 ms, 1,000 single-URL samples |
+| Held-out test false-positive rate | 0.12% (32/26,923 legitimate URLs) |
+| Confusion matrix | TN 26,891 · FP 32 · FN 531 · TP 19,267 |
+| URL feature + model inference latency | p50 0.66 ms · p95 1.33 ms, 1,000 single-URL samples |
 
 The latency figure is local CPU feature extraction plus model inference; it excludes HTTP, hosting, and network time. The classifier's percentage-like score is not calibrated probability. Strong benchmark performance does not guarantee future detection: dataset provenance, domain grouping, out-of-distribution URLs, label quality, concept drift, and provider-specific traffic can change results. Review the included metrics JSON and rerun evaluation on a separately licensed, later dataset before operational use. Other threat categories have no measured classifier accuracy.
 

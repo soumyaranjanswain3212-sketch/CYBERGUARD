@@ -11,7 +11,6 @@ from time import perf_counter_ns
 from urllib.error import URLError
 from urllib.request import urlopen
 
-import joblib
 import numpy as np
 import sklearn
 from sklearn.linear_model import LogisticRegression
@@ -28,7 +27,12 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from backend.app.url_model import FEATURE_NAMES, MODEL_VERSION, extract_url_features
+from backend.app.url_model import (
+    FEATURE_NAMES,
+    MODEL_VERSION,
+    _phishing_probability,
+    extract_url_features,
+)
 
 DATA_URL = "https://archive.ics.uci.edu/static/public/967/data.csv"
 DATASET_CITATION = (
@@ -68,7 +72,7 @@ def _download_if_missing(dataset_path: Path) -> None:
 
 def _load_dataset(dataset_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
     capacity = 262_144
-    features = np.empty((capacity, len(FEATURE_NAMES)), dtype=np.float32)
+    features = np.empty((capacity, len(FEATURE_NAMES)), dtype=np.float64)
     labels = np.empty(capacity, dtype=np.int8)
     groups = np.empty(capacity, dtype=object)
     row_count = 0
@@ -215,12 +219,22 @@ def train(dataset_path: Path, model_path: Path) -> dict:
     test_scores = model.predict_proba(features[test_indices])[:, 1]
     test_metrics = _evaluate(labels[test_indices], test_scores, threshold)
     runtime_latency = _measure_runtime_latency(model, dataset_path)
+    scaler = model.named_steps["standardscaler"]
+    classifier = model.named_steps["logisticregression"]
     model_path.parent.mkdir(parents=True, exist_ok=True)
     artifact = {
         "model_version": MODEL_VERSION,
-        "model": model,
         "feature_names": FEATURE_NAMES,
         "threshold": threshold,
+        "scaler": {
+            "mean": scaler.mean_.tolist(),
+            "scale": scaler.scale_.tolist(),
+        },
+        "classifier": {
+            "classes": classifier.classes_.astype(int).tolist(),
+            "coefficients": classifier.coef_[0].tolist(),
+            "intercept": float(classifier.intercept_[0]),
+        },
         "validation_metrics": validation_metrics,
         "test_metrics": test_metrics,
         "runtime_latency": runtime_latency,
@@ -249,10 +263,18 @@ def train(dataset_path: Path, model_path: Path) -> dict:
             "created_at": datetime.now(UTC).isoformat(),
         },
     }
-    joblib.dump(artifact, model_path, compress=3)
+    serialized_test_scores = [
+        _phishing_probability(artifact, row.tolist())
+        for row in features[test_indices[:1000]]
+    ]
+    if not np.allclose(serialized_test_scores, test_scores[:1000], rtol=1e-10, atol=1e-12):
+        raise RuntimeError("JSON model parameters do not reproduce the trained classifier scores.")
+    temporary_model_path = model_path.with_suffix(model_path.suffix + ".tmp")
+    temporary_model_path.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+    temporary_model_path.replace(model_path)
     report_path = model_path.with_suffix(".metrics.json")
     report_path.write_text(
-        json.dumps({key: value for key, value in artifact.items() if key != "model"}, indent=2),
+        json.dumps(artifact, indent=2),
         encoding="utf-8",
     )
     return artifact
@@ -269,7 +291,7 @@ def main() -> None:
     parser.add_argument(
         "--model-out",
         type=Path,
-        default=Path("backend/models/phiusiil_url_model.joblib"),
+        default=Path("backend/models/phiusiil_url_model.json"),
     )
     arguments = parser.parse_args()
     started = time.perf_counter()
