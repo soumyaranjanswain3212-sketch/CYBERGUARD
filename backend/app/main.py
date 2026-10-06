@@ -37,6 +37,11 @@ class AnalyzeRequest(BaseModel):
     failed_attempts: int | None = Field(default=None, ge=0, le=100_000)
     new_device: bool = False
     unusual_location: bool = False
+    requests_per_minute: int | None = Field(default=None, ge=0, le=10_000_000)
+    baseline_requests_per_minute: int | None = Field(default=None, gt=0, le=10_000_000)
+    bytes_out_mb: float | None = Field(default=None, ge=0, le=1_000_000_000)
+    baseline_bytes_out_mb: float | None = Field(default=None, gt=0, le=1_000_000_000)
+    error_rate_percent: float | None = Field(default=None, ge=0, le=100)
 
 
 class StatusUpdate(BaseModel):
@@ -75,7 +80,24 @@ def update_event(event_id: str, request: StatusUpdate) -> dict:
 
 @app.post("/api/analyze")
 def analyze(request: AnalyzeRequest) -> dict:
-    if not request.content.strip() and not (request.url or "").strip() and request.source.casefold() != "auth":
+    source = request.source.casefold()
+    if source == "network":
+        if request.requests_per_minute is None and request.bytes_out_mb is None and request.error_rate_percent is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide request volume, outbound data, or API error-rate measurements.",
+            )
+        if (request.requests_per_minute is None) != (request.baseline_requests_per_minute is None):
+            raise HTTPException(
+                status_code=422,
+                detail="Request volume and its baseline must be provided together.",
+            )
+        if (request.bytes_out_mb is None) != (request.baseline_bytes_out_mb is None):
+            raise HTTPException(
+                status_code=422,
+                detail="Outbound data volume and its baseline must be provided together.",
+            )
+    elif not request.content.strip() and not (request.url or "").strip() and source != "auth":
         raise HTTPException(status_code=422, detail="Provide message content or a URL to analyze.")
     event = analyze_event(request.model_dump())
     return storage.insert_event(event)

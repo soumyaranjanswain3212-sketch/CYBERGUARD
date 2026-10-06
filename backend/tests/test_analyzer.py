@@ -51,6 +51,40 @@ class AnalyzerTests(unittest.TestCase):
         })
         self.assertEqual(result["score"], 95)
 
+    def test_network_spike_is_scored_with_measurement_evidence_and_actions(self):
+        result = analyze_event({
+            "source": "network",
+            "requests_per_minute": 1200,
+            "baseline_requests_per_minute": 100,
+            "bytes_out_mb": 90,
+            "baseline_bytes_out_mb": 10,
+            "error_rate_percent": 55,
+        })
+
+        self.assertEqual(result["category"], "Network / API anomaly")
+        self.assertEqual(result["severity"], "Critical")
+        self.assertEqual(result["score"], 95)
+        self.assertTrue(any("12.0x" in item for item in result["indicators"]))
+        self.assertIn(
+            "Review outbound data destinations and investigate possible exfiltration",
+            result["recommendations"],
+        )
+
+    def test_normal_network_measurements_are_not_flagged_as_anomalous(self):
+        result = analyze_event({
+            "source": "network",
+            "requests_per_minute": 110,
+            "baseline_requests_per_minute": 100,
+            "bytes_out_mb": 12,
+            "baseline_bytes_out_mb": 10,
+            "error_rate_percent": 2,
+        })
+
+        self.assertEqual(result["category"], "Network / API anomaly")
+        self.assertEqual(result["severity"], "Safe")
+        self.assertIn("did not cross", result["indicators"][0])
+        self.assertIn("not a guarantee", result["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

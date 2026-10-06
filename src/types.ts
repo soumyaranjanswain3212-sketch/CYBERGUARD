@@ -22,6 +22,11 @@ export type AnalysisInput = {
   failed_attempts?: number;
   new_device?: boolean;
   unusual_location?: boolean;
+  requests_per_minute?: number;
+  baseline_requests_per_minute?: number;
+  bytes_out_mb?: number;
+  baseline_bytes_out_mb?: number;
+  error_rate_percent?: number;
 };
 
 export type DashboardSummary = {

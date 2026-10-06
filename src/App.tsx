@@ -120,7 +120,12 @@ function App() {
     setError("");
     setAnalyzing(true);
     try {
-      if (input.source !== "auth" && !input.content.trim() && !input.url?.trim()) {
+      if (input.source === "network") {
+        const hasNetworkMetric = input.requests_per_minute !== undefined
+          || input.bytes_out_mb !== undefined
+          || input.error_rate_percent !== undefined;
+        if (!hasNetworkMetric) throw new Error("Add at least one network or API measurement.");
+      } else if (input.source !== "auth" && !input.content.trim() && !input.url?.trim()) {
         throw new Error("Add message content or a URL to analyze.");
       }
       const result = await analyzeEvent(input);
@@ -342,9 +347,19 @@ function App() {
 
       {showAnalyzer && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAnalyzer(false); }}>
         <form className="analyzer-modal" onSubmit={submitAnalysis}>
-          <div className="modal-header"><div className="modal-icon"><Sparkles size={19} /></div><div><h2>Analyze an event</h2><p>Inspect a message, URL, identity report, or login signal.</p></div><button type="button" className="icon-button" onClick={() => setShowAnalyzer(false)} aria-label="Close"><X size={18} /></button></div>
+          <div className="modal-header"><div className="modal-icon"><Sparkles size={19} /></div><div><h2>Analyze an event</h2><p>Inspect a message, URL, identity report, or telemetry measurement.</p></div><button type="button" className="icon-button" onClick={() => setShowAnalyzer(false)} aria-label="Close"><X size={18} /></button></div>
           <label className="form-label">Signal type<select value={input.source} onChange={(e) => setInput({ ...input, source: e.target.value })}><option value="email">Email or message</option><option value="url">Website or URL</option><option value="identity">Impersonation / media report</option><option value="auth">Authentication activity</option><option value="network">Network or API activity</option></select></label>
           {input.source === "auth" && <div className="auth-fields"><label className="form-label">Failed attempts<input type="number" min="0" value={input.failed_attempts ?? 0} onChange={(e) => setInput({ ...input, failed_attempts: Number(e.target.value) })} /></label><label className="check-field"><input type="checkbox" checked={input.new_device ?? false} onChange={(e) => setInput({ ...input, new_device: e.target.checked })} /> New device</label><label className="check-field"><input type="checkbox" checked={input.unusual_location ?? false} onChange={(e) => setInput({ ...input, unusual_location: e.target.checked })} /> Unusual location</label></div>}
+          {input.source === "network" && <div className="network-fields">
+            <p className="field-hint">Enter observed telemetry and its usual baseline where applicable. These values are analyzed by the API and saved with the resulting event.</p>
+            <div className="auth-fields">
+              <label className="form-label">Requests / minute<input type="number" min="0" max="10000000" value={input.requests_per_minute ?? ""} onChange={(e) => setInput({ ...input, requests_per_minute: e.target.value === "" ? undefined : Number(e.target.value) })} /></label>
+              <label className="form-label">Baseline requests / min<input type="number" min="1" max="10000000" value={input.baseline_requests_per_minute ?? ""} onChange={(e) => setInput({ ...input, baseline_requests_per_minute: e.target.value === "" ? undefined : Number(e.target.value) })} /></label>
+              <label className="form-label">Outbound data (MB)<input type="number" min="0" step="any" value={input.bytes_out_mb ?? ""} onChange={(e) => setInput({ ...input, bytes_out_mb: e.target.value === "" ? undefined : Number(e.target.value) })} /></label>
+              <label className="form-label">Baseline outbound (MB)<input type="number" min="0.001" step="any" value={input.baseline_bytes_out_mb ?? ""} onChange={(e) => setInput({ ...input, baseline_bytes_out_mb: e.target.value === "" ? undefined : Number(e.target.value) })} /></label>
+              <label className="form-label">API error rate (%)<input type="number" min="0" max="100" step="any" value={input.error_rate_percent ?? ""} onChange={(e) => setInput({ ...input, error_rate_percent: e.target.value === "" ? undefined : Number(e.target.value) })} /></label>
+            </div>
+          </div>}
           <label className="form-label">Content to analyze<textarea rows={5} value={input.content} onChange={(e) => setInput({ ...input, content: e.target.value })} placeholder={input.source === "auth" ? "Optional context about the sign-in event..." : "Paste the message, reported behavior, or other text here..."} /></label>
           {input.source !== "auth" && <label className="form-label">Related URL <span className="optional">(optional)</span><input value={input.url} onChange={(e) => setInput({ ...input, url: e.target.value })} placeholder="https://example.com/sign-in" /></label>}
           {(input.source === "email" || input.source === "identity") && <label className="form-label">Claimed sender <span className="optional">(optional)</span><input value={input.sender ?? ""} onChange={(e) => setInput({ ...input, sender: e.target.value })} placeholder="payroll@example.org" /></label>}

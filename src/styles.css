@@ -267,6 +267,7 @@ tbody tr:hover,.selected-row { background: #151f2a; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 17px; }
 .modal-actions .secondary-button { min-width: 80px; }
 .form-error { display: flex; align-items: center; gap: 6px; margin-bottom: 11px; color: #f08e86; font-size: 9px; }
+.field-hint { margin: 0 0 10px; color: #94a1b1; font-size: 10px; line-height: 1.5; }
 .button-spinner { width: 12px; height: 12px; border: 2px solid #163622; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .mobile-scrim { display: none; }

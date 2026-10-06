@@ -39,7 +39,7 @@ Optional: set `VITE_API_BASE_URL` for a different API origin and `CYBERGUARD_COR
 
 ## Detection method and scoring
 
-The backend applies readable keyword and URL-structure checks—urgency, credential requests, authority references, payment requests, shortened/punycode/multi-hyphen/IP-literal or long domains, plus failed logins, unfamiliar devices, and unusual locations. Indicator weights are added and capped at 100. Severity bands are Safe (0–14), Low (15–39), Medium (40–64), High (65–84), and Critical (85–100).
+The backend applies readable keyword and URL-structure checks—urgency, credential requests, authority references, payment requests, shortened/punycode/multi-hyphen/IP-literal or long domains, plus failed logins, unfamiliar devices, and unusual locations. For network/API reports, request or outbound-data volume at 2x, 3x, and 10x the supplied baseline adds increasing risk; API error rates at 25% and 50% also add risk. Those thresholds are configurable in code and are not learned from observed traffic. Indicator weights are added and capped at 95. Severity bands are Safe (0–14), Low (15–39), Medium (40–64), High (65–84), and Critical (85–95).
 
 The service returns the evidence that contributed to its score. Some message rules overlap intentionally, so this score is a triage signal, not a calibrated probability. No email headers, DNS/WHOIS, browser redirects, image/audio/video bytes, threat-intelligence feeds, or user baselines are fetched or analyzed. Dashboard counters and charts are calculated from records in the configured SQLite database; an empty database produces an empty dashboard.
 

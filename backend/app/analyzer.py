@@ -76,7 +76,59 @@ def analyze_event(payload: dict) -> dict:
     category = "Unclassified signal"
     score = 0
 
-    if source == "auth":
+    if source == "network":
+        requests = payload.get("requests_per_minute")
+        request_baseline = payload.get("baseline_requests_per_minute")
+        bytes_out = payload.get("bytes_out_mb")
+        bytes_baseline = payload.get("baseline_bytes_out_mb")
+        error_rate = payload.get("error_rate_percent")
+
+        if requests is not None and request_baseline:
+            ratio = requests / request_baseline
+            if ratio >= 10:
+                indicators.append(f"API request volume is {ratio:.1f}x its supplied baseline")
+                score += 45
+            elif ratio >= 3:
+                indicators.append(f"API request volume is {ratio:.1f}x its supplied baseline")
+                score += 30
+            elif ratio >= 2:
+                indicators.append(f"API request volume is {ratio:.1f}x its supplied baseline")
+                score += 15
+
+        if bytes_out is not None and bytes_baseline:
+            ratio = bytes_out / bytes_baseline
+            if ratio >= 10:
+                indicators.append(f"Outbound data volume is {ratio:.1f}x its supplied baseline")
+                score += 45
+            elif ratio >= 3:
+                indicators.append(f"Outbound data volume is {ratio:.1f}x its supplied baseline")
+                score += 30
+            elif ratio >= 2:
+                indicators.append(f"Outbound data volume is {ratio:.1f}x its supplied baseline")
+                score += 20
+
+        if error_rate is not None:
+            if error_rate >= 50:
+                indicators.append(f"API error rate is unusually high at {error_rate:g}%")
+                score += 20
+            elif error_rate >= 25:
+                indicators.append(f"API error rate is elevated at {error_rate:g}%")
+                score += 10
+
+        category = "Network / API anomaly"
+        if indicators:
+            recommendations.extend([
+                "Review the affected service, client identity, and request logs",
+                "Apply a temporary rate limit if the traffic is not authorized",
+            ])
+            if bytes_out is not None and bytes_baseline and bytes_out / bytes_baseline >= 3:
+                recommendations.append("Review outbound data destinations and investigate possible exfiltration")
+            if requests is not None and request_baseline and requests / request_baseline >= 3:
+                recommendations.append("Validate the API client and rotate its credential if misuse is confirmed")
+        else:
+            indicators.append("Supplied measurements did not cross the configured anomaly thresholds")
+            recommendations.append("Continue monitoring and compare against a representative baseline")
+    elif source == "auth":
         failed = max(0, int(payload.get("failed_attempts") or 0))
         new_device = bool(payload.get("new_device"))
         unusual_location = bool(payload.get("unusual_location"))
