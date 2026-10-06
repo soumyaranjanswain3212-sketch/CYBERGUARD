@@ -10,7 +10,7 @@ CyberGuard is a student-built cybersecurity monitoring prototype for **authorize
 - Classify signals into credential phishing, suspicious URL, impersonation/deepfake concern, or account takeover.
 - Return a 0–100 heuristic risk score, severity, matched indicators, explanation, and suggested next actions.
 - Score a URL with a locally trained logistic-regression classifier when its committed model artifact is installed; inference derives features from the URL string and never visits the destination.
-- Browse incidents created by analysis requests and persisted in SQLite; search and filter them, inspect evidence, and update incident status.
+- Open a dedicated threat inbox for incidents created by analysis requests and persisted in SQLite; search and filter them, inspect evidence, and update incident status. Empty inboxes remain empty—use **Analyze an event** to create the first real record.
 - View event totals, hourly activity, category breakdown, and recent analyses, all derived from the API's persisted event records.
 - Sign in to the analyst dashboard with a salted-password-hash account and a short-lived, CSRF-protected session.
 - Run the API and UI locally with separate development servers or serve the built UI and API together from one deployment.

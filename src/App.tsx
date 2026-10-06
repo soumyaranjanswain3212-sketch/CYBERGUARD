@@ -262,10 +262,22 @@ function App() {
     setWorkspaceView("Threat inbox");
     setFilter("All events");
     setSearch("");
-    setNotice(events.length
-      ? `Showing all ${events.length} stored events.`
-      : "No events have been recorded yet. Analyze a signal to create the first real event.");
-    window.setTimeout(() => document.querySelector(".events-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
+    setNotice("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function returnToOverview() {
+    setWorkspaceView("Overview");
+    setFilter("All events");
+    setSearch("");
+    setNotice("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startFirstAnalysis() {
+    setInput({ source: "email", content: "", sender: "", url: "" });
+    setError("");
+    setShowAnalyzer(true);
   }
 
   if (authLoading) {
@@ -293,7 +305,8 @@ function App() {
         <nav className="primary-nav" aria-label="Main navigation">
           {navItems.map(({ label, icon: Icon }) => (
             <button key={label} className={`nav-item ${workspaceView === label ? "active" : ""}`} aria-current={workspaceView === label ? "page" : undefined} onClick={() => {
-              selectWorkspaceView(label);
+              if (label === "Threat inbox") showAllEvents();
+              else selectWorkspaceView(label);
               if (label === "URL analysis") {
                 setInput({ source: "url", content: "", sender: "", url: "" });
                 setError("");
@@ -326,7 +339,7 @@ function App() {
       <main className="main">
         <header className="topbar">
           <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={19} /></button>
-          <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><b>Overview</b></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><b>{workspaceView}</b></div>
           <div className="topbar-right">
             <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API connected" : "API offline"}<span className="status-separator" /><span className={`status-dot ${apiHealth?.url_model.available ? "online" : ""}`} />{apiHealth?.url_model.available ? "URL model active" : "URL rules only"}</div>
             <button className="icon-button top-search" aria-label="Focus event search" onClick={() => {
@@ -343,23 +356,28 @@ function App() {
             <div>
               <div className="eyebrow"><span className="eyebrow-line" />{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date()).toUpperCase()}</div>
               <h1>{workspaceView === "Overview" ? "Security overview" : workspaceView}</h1>
-              <p className="heading-subtitle">Persisted analysis events from this CyberGuard instance.</p>
+              <p className="heading-subtitle">{workspaceView === "Threat inbox"
+                ? `${events.length} stored event${events.length === 1 ? "" : "s"} in this CyberGuard instance.`
+                : "Persisted analysis events from this CyberGuard instance."}</p>
             </div>
-            <button className="primary-button" onClick={() => { setError(""); setShowAnalyzer(true); }}>
-              <Plus size={17} /> Analyze an event <span className="shortcut">⌘ K</span>
-            </button>
+            <div className="heading-actions">
+              {workspaceView === "Threat inbox" && <button className="secondary-button" onClick={returnToOverview}>Back to overview</button>}
+              <button className="primary-button" onClick={startFirstAnalysis}>
+                <Plus size={17} /> Analyze an event <span className="shortcut">⌘ K</span>
+              </button>
+            </div>
           </section>
           {notice && <div className="connection-warning" role="status">{notice}<button className="notice-dismiss" onClick={() => setNotice("")} aria-label="Dismiss message"><X size={14} /></button></div>}
           {dashboardError && <div className="connection-warning" role="status">{dashboardError} {summary ? "Showing the last data successfully loaded." : "No dashboard data has been loaded."}</div>}
 
-          <section className="metrics-grid" aria-label="Security metrics">
+          {workspaceView !== "Threat inbox" && <section className="metrics-grid" aria-label="Security metrics">
             <Metric icon={<Activity size={17} />} label="Events analyzed" value={String(summary?.events_last_24h ?? 0)} detail="Last 24 hours" />
             <Metric icon={<ShieldAlert size={17} />} label="High-risk events" value={String(highRiskEvents)} detail="Critical and High, last 24h" />
             <Metric icon={<LockKeyhole size={17} />} label="Open incidents" value={String(summary?.open_events ?? 0)} detail="New or investigating" />
             <Metric icon={<Clock3 size={17} />} label="All-time events" value={String(summary?.total_events ?? 0)} detail="Persisted analysis records" />
-          </section>
+          </section>}
 
-          <section className="middle-grid">
+          {workspaceView !== "Threat inbox" && <section className="middle-grid">
             <div className="panel trend-panel">
               <div className="panel-heading">
                 <div><h2>Event activity</h2><p>Persisted analyses by hour, last 24 hours</p></div>
@@ -394,12 +412,12 @@ function App() {
                 {!categoryBreakdown.length && <p className="no-category-data">No category data yet.</p>}
               </div>
             </div>
-          </section>
+          </section>}
 
           <section className="panel events-panel">
             <div className="events-header">
               <div className="panel-heading event-title">
-                <div><h2>Recent threat events <span className="event-count">{events.length}</span></h2><p>Review and respond to the latest detections</p></div>
+                <div><h2>{workspaceView === "Threat inbox" ? "All threat events" : "Recent threat events"} <span className="event-count">{events.length}</span></h2><p>Review and respond to the latest detections</p></div>
               </div>
               <div className="event-tools">
                 <label className="table-search"><Search size={15} /><input ref={searchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search events..." /></label>
@@ -424,14 +442,25 @@ function App() {
                       <td><button className="row-more" aria-label={`Open ${event.id}`} onClick={(e) => { e.stopPropagation(); setSelected(event); }}><MoreHorizontal size={17} /></button></td>
                     </tr>
                   ))}
-                  {filteredEvents.length === 0 && <tr><td colSpan={7} className="empty-state">No events match this search.</td></tr>}
+                  {filteredEvents.length === 0 && <tr><td colSpan={7} className="empty-state">
+                    {events.length === 0 ? <>
+                      <strong>No events have been analyzed yet.</strong>
+                      <span>Analyze a real message, URL, sign-in, or network signal to create the first inbox record.</span>
+                      <button className="primary-button" onClick={startFirstAnalysis}><Plus size={15} /> Analyze your first event</button>
+                    </> : <>
+                      <strong>No events match these filters.</strong>
+                      <button className="secondary-button" onClick={() => { setFilter("All events"); setSearch(""); }}>Clear filters</button>
+                    </>}
+                  </td></tr>}
                 </tbody>
               </table>
             </div>
-            <div className="table-footer"><span>Showing <b>{filteredEvents.length}</b> of <b>{events.length}</b> events</span><button onClick={showAllEvents}>View all events <ArrowUpRight size={14} /></button></div>
+            <div className="table-footer"><span>Showing <b>{filteredEvents.length}</b> of <b>{events.length}</b> events</span>{workspaceView === "Threat inbox"
+              ? <button onClick={returnToOverview}>Back to overview <ArrowUpRight size={14} /></button>
+              : <button onClick={showAllEvents}>View all events <ArrowUpRight size={14} /></button>}</div>
           </section>
 
-          <section className="bottom-grid">
+          {workspaceView !== "Threat inbox" && <section className="bottom-grid">
             <div className="panel activity-panel">
               <div className="panel-heading"><div><h2>Recent analyses</h2><p>Latest events stored by this instance</p></div><span className="stream-tag"><span className={`status-dot ${apiOnline ? "online" : ""}`} /> POLL 30S</span></div>
               <div className="activity-list">
@@ -444,7 +473,7 @@ function App() {
               <div><span className="response-kicker">RESPONSE POSTURE</span><h3>Analyst review queue</h3><p>{summary?.open_events ?? 0} open incidents. CyberGuard records recommendations; it does not take response actions automatically.</p><button onClick={() => setFilter("High")}>Review high-risk events <ArrowUpRight size={14} /></button></div>
               <div className="response-watermark"><Shield size={95} /></div>
             </div>
-          </section>
+          </section>}
 
           <footer className="app-footer"><span><Command size={12} /> CyberGuard <i /> Hybrid URL model + rules <i /> 1.3.0</span><span>API <b className={apiOnline ? "footer-online" : ""}>{apiOnline ? "CONNECTED" : "OFFLINE"}</b><span className={`footer-dot ${apiOnline ? "online" : ""}`} /></span></footer>
         </div>
