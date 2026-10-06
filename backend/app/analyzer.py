@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from .url_model import score_url
+
 
 URGENT_TERMS = (
     "urgent", "immediately", "within 24 hours", "action required", "suspended",
@@ -158,6 +160,7 @@ def analyze_event(payload: dict) -> dict:
         authorities = _matches(combined, AUTHORITY_TERMS)
         payment = _matches(combined, PAYMENT_TERMS)
         urls = _url_indicators(url)
+        url_model_result = score_url(url) if url else None
 
         if urgent:
             indicators.append(f"Urgency language detected: {', '.join(urgent[:3])}")
@@ -174,6 +177,21 @@ def analyze_event(payload: dict) -> dict:
         if urls:
             indicators.extend(urls)
             score += min(35, 15 * len(urls))
+        if url_model_result:
+            phishing_score = url_model_result["phishing_score"]
+            threshold = url_model_result["threshold"]
+            if url_model_result["flagged"]:
+                indicators.append(
+                    f"Local URL model flagged the URL (score {phishing_score:.0%}; "
+                    f"validation threshold {threshold:.0%})"
+                )
+                score += 40
+                recommendations.append("Do not open the URL; block it after security policy review")
+            else:
+                indicators.append(
+                    f"Local URL model score {phishing_score:.0%} is below its "
+                    f"{threshold:.0%} decision threshold; this does not prove the URL is safe"
+                )
         if sender and re.search(r"@(gmail|outlook|yahoo|hotmail)\.", sender, re.IGNORECASE) and authorities:
             indicators.append("Authority-themed sender uses a consumer email provider")
             score += 20
@@ -195,7 +213,7 @@ def analyze_event(payload: dict) -> dict:
                 recommendations.append("Escalate media for human review; this prototype does not detect deepfakes")
         elif source == "url":
             category = "Malicious URL"
-            if url and not urls:
+            if url and not urls and not (url_model_result and url_model_result["flagged"]):
                 indicators.append("URL supplied for review; no configured structural warning was matched")
                 score = max(score, 15)
             recommendations.extend(["Verify the destination domain before opening", "Check gateway logs for prior visits"])

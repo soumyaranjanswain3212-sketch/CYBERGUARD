@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from backend.app.analyzer import analyze_event
 
@@ -84,6 +85,27 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(result["severity"], "Safe")
         self.assertIn("did not cross", result["indicators"][0])
         self.assertIn("not a guarantee", result["summary"])
+
+    def test_trained_url_model_result_is_explained_and_changes_risk(self):
+        with patch(
+            "backend.app.analyzer.score_url",
+            return_value={
+                "model": "test-model",
+                "phishing_score": 0.93,
+                "threshold": 0.54,
+                "flagged": True,
+            },
+        ) as score_url:
+            result = analyze_event({"source": "url", "url": "https://example.org/sign-in"})
+
+        self.assertEqual(result["category"], "Malicious URL")
+        self.assertGreaterEqual(result["score"], 40)
+        self.assertTrue(any("score 93%" in item for item in result["indicators"]))
+        score_url.assert_called_once_with("https://example.org/sign-in")
+        self.assertIn(
+            "Do not open the URL; block it after security policy review",
+            result["recommendations"],
+        )
 
 
 if __name__ == "__main__":

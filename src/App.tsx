@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertOctagon, ArrowUpRight, Bell, ChevronDown,
   CircleHelp, Clock3, Command, FileSearch, Fingerprint, Globe2, LayoutDashboard,
-  LockKeyhole, Menu, MessageSquareWarning, MoreHorizontal, Network, Plus,
+  LockKeyhole, LogOut, Menu, MessageSquareWarning, MoreHorizontal, Network, Plus,
   Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles,
   X,
 } from "lucide-react";
-import { analyzeEvent, checkHealth, getEvents, getSummary, updateEventStatus } from "./api";
+import {
+  analyzeEvent, checkHealth, getAnalystSession, getEvents, getSummary, loginAnalyst,
+  logoutAnalyst, setSessionExpiredHandler, updateEventStatus,
+} from "./api";
+import type { ApiHealth } from "./api";
 import type { AnalysisInput, DashboardSummary, Severity, ThreatEvent } from "./types";
 
 const navItems = [
@@ -38,6 +42,9 @@ function App() {
   const [error, setError] = useState("");
   const [dashboardError, setDashboardError] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [analyst, setAnalyst] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [apiHealth, setApiHealth] = useState<ApiHealth | null>(null);
   const [input, setInput] = useState<AnalysisInput>({
     source: "email",
     content: "",
@@ -47,11 +54,12 @@ function App() {
 
   async function refreshDashboard() {
     try {
-      const healthy = await checkHealth();
-      if (!healthy) throw new Error("CyberGuard API is unavailable.");
+      const health = await checkHealth();
+      if (health.status !== "ok") throw new Error("CyberGuard API is unavailable.");
       const [remoteEvents, remoteSummary] = await Promise.all([getEvents(), getSummary()]);
       setEvents(remoteEvents);
       setSummary(remoteSummary);
+      setApiHealth(health);
       setApiOnline(true);
       setDashboardError("");
     } catch (reason) {
@@ -62,9 +70,38 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    setSessionExpiredHandler(() => {
+      if (active) {
+        setAnalyst("");
+        setEvents([]);
+        setSummary(null);
+        setApiOnline(false);
+        setApiHealth(null);
+      }
+    });
+    void getAnalystSession()
+      .then((session) => {
+        if (active) setAnalyst(session.username);
+      })
+      .catch(() => {
+        if (active) {
+          setAnalyst("");
+          setApiOnline(false);
+        }
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!analyst) return;
+    let active = true;
     const refresh = async () => {
-      if (!active) return;
-      await refreshDashboard();
+      if (active) await refreshDashboard();
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
@@ -72,7 +109,7 @@ function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [analyst]);
 
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -164,6 +201,25 @@ function App() {
     }
   }
 
+  async function handleLogout() {
+    try {
+      await logoutAnalyst();
+      setAnalyst("");
+      setEvents([]);
+      setSummary(null);
+      setApiOnline(false);
+    } catch (reason) {
+      setDashboardError(reason instanceof Error ? reason.message : "Sign out could not be completed.");
+    }
+  }
+
+  if (authLoading) {
+    return <div className="auth-shell"><p>Checking analyst session…</p></div>;
+  }
+  if (!analyst) {
+    return <LoginScreen onSignedIn={setAnalyst} />;
+  }
+
   return (
     <div className="app-shell">
       {mobileNav && <button className="mobile-scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation" />}
@@ -199,9 +255,9 @@ function App() {
         </div>
         <button className="nav-item bottom-nav"><CircleHelp size={17} strokeWidth={1.8} /><span>Help & documentation</span></button>
         <div className="profile">
-          <div className="profile-avatar">AS</div>
-          <div className="profile-copy"><b>Analyst</b><span>Local session</span></div>
-          <MoreHorizontal size={18} className="muted-icon" />
+          <div className="profile-avatar">{analyst.slice(0, 2).toUpperCase()}</div>
+          <div className="profile-copy"><b>{analyst}</b><span>Authenticated session</span></div>
+          <button className="icon-button" onClick={() => void handleLogout()} aria-label="Sign out" title="Sign out"><LogOut size={15} /></button>
         </div>
       </aside>
 
@@ -210,7 +266,7 @@ function App() {
           <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><b>Overview</b></div>
           <div className="topbar-right">
-            <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API connected" : "API offline"}<span className="status-separator" />30s refresh</div>
+            <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API connected" : "API offline"}<span className="status-separator" /><span className={`status-dot ${apiHealth?.url_model.available ? "online" : ""}`} />{apiHealth?.url_model.available ? "URL model active" : "URL rules only"}</div>
             <button className="icon-button top-search" aria-label="Search"><Search size={17} /></button>
             <button className="icon-button notification-button" aria-label="Notifications"><Bell size={17} /><i /></button>
             <div className="top-avatar">A</div>
@@ -324,7 +380,7 @@ function App() {
             </div>
           </section>
 
-          <footer className="app-footer"><span><Command size={12} /> CyberGuard <i /> Rule-based prototype <i /> 1.0.0</span><span>API <b className={apiOnline ? "footer-online" : ""}>{apiOnline ? "CONNECTED" : "OFFLINE"}</b><span className={`footer-dot ${apiOnline ? "online" : ""}`} /></span></footer>
+          <footer className="app-footer"><span><Command size={12} /> CyberGuard <i /> Hybrid URL model + rules <i /> 1.3.0</span><span>API <b className={apiOnline ? "footer-online" : ""}>{apiOnline ? "CONNECTED" : "OFFLINE"}</b><span className={`footer-dot ${apiOnline ? "online" : ""}`} /></span></footer>
         </div>
       </main>
 
@@ -364,7 +420,7 @@ function App() {
           {input.source !== "auth" && <label className="form-label">Related URL <span className="optional">(optional)</span><input value={input.url} onChange={(e) => setInput({ ...input, url: e.target.value })} placeholder="https://example.com/sign-in" /></label>}
           {(input.source === "email" || input.source === "identity") && <label className="form-label">Claimed sender <span className="optional">(optional)</span><input value={input.sender ?? ""} onChange={(e) => setInput({ ...input, sender: e.target.value })} placeholder="payroll@example.org" /></label>}
           {error && <div className="form-error"><AlertOctagon size={15} />{error}</div>}
-          <div className="modal-note"><Shield size={14} /> Analysis runs locally against transparent prototype heuristics. No content is sent to an external AI service.</div>
+          <div className="modal-note"><Shield size={14} /> Analysis uses local rules and the trained URL model when it is installed. No content is sent to an external AI service.</div>
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAnalyzer(false)}>Cancel</button><button className="primary-button" disabled={analyzing}>{analyzing ? <><span className="button-spinner" /> Analyzing…</> : <><FileSearch size={16} /> Analyze signal</>}</button></div>
         </form>
       </div>}
@@ -392,6 +448,44 @@ function EventIcon({ category }: { category: string }) {
   if (category.toLowerCase().includes("api")) return <Network size={15} />;
   if (category.toLowerCase().includes("execution")) return <Activity size={15} />;
   return <MessageSquareWarning size={15} />;
+}
+
+function LoginScreen({ onSignedIn }: { onSignedIn: (username: string) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      const session = await loginAnalyst(username, password);
+      setPassword("");
+      onSignedIn(session.username);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Sign-in could not be completed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <div className="brand auth-brand"><div className="brand-mark"><Shield size={20} strokeWidth={2.4} /></div><span>cyber<span className="brand-light">guard</span></span></div>
+        <span className="drawer-kicker">SECURE ANALYST ACCESS</span>
+        <h1>Sign in to CyberGuard</h1>
+        <p>Use the analyst account configured for this server.</p>
+        <label className="form-label">Username<input autoComplete="username" required maxLength={80} value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+        <label className="form-label">Password<input type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        {error && <div className="form-error" role="alert"><AlertOctagon size={15} />{error}</div>}
+        <button className="primary-button auth-submit" disabled={submitting}>{submitting ? <><span className="button-spinner" /> Signing in…</> : "Sign in"}</button>
+        <div className="modal-note"><Shield size={14} /> Session cookies are HTTP-only, expire after eight hours, and require CSRF protection for changes.</div>
+      </form>
+    </main>
+  );
 }
 
 export default App;

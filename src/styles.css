@@ -271,6 +271,15 @@ tbody tr:hover,.selected-row { background: #151f2a; }
 .button-spinner { width: 12px; height: 12px; border: 2px solid #163622; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .mobile-scrim { display: none; }
+.auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(ellipse at 50% 35%,#17251f 0,#0b1018 58%); }
+.auth-shell>p { color: #aab5c2; font-size: 12px; }
+.auth-card { width: min(100%,390px); display: grid; gap: 12px; padding: 25px; border: 1px solid #263442; border-radius: 10px; background: #111923; box-shadow: 0 24px 90px #0008; }
+.auth-brand { padding: 0 0 8px; }
+.auth-card>.drawer-kicker { margin-top: 9px; }
+.auth-card h1 { margin: 0; color: #eff3f8; font: 700 22px Manrope,sans-serif; letter-spacing: -.7px; }
+.auth-card>p { margin: -5px 0 7px; color: #8996a6; font-size: 11px; line-height: 1.5; }
+.auth-card .form-label { margin-bottom: 0; }
+.auth-submit { width: 100%; min-height: 38px; margin: 2px 0 3px; }
 
 @media (min-width: 1700px) { .main { margin-right: 350px; width: calc(100% - 586px); }.detail-drawer { width: 350px; } }
 @media (max-width: 1320px) { .sidebar { width: 215px; flex-basis: 215px; }.main { margin-left: 215px; margin-right: 300px; width: calc(100% - 515px); }.detail-drawer { width: 300px; }.content { padding-left: 21px; padding-right: 21px; }.topbar { padding: 0 21px; }.metric-card { padding-left: 11px; padding-right: 10px; }.metric-bottom { gap: 4px; font-size: 8px; }.middle-grid { grid-template-columns: minmax(0,1.7fr) minmax(195px,1fr); } }

@@ -1,0 +1,93 @@
+{
+  "model_version": "cyberguard-phiusiil-url-v1",
+  "feature_names": [
+    "url_length",
+    "host_length",
+    "path_length",
+    "query_length",
+    "dot_count",
+    "subdomain_count",
+    "hyphen_count",
+    "underscore_count",
+    "at_count",
+    "percent_count",
+    "digit_count",
+    "digit_ratio",
+    "special_char_ratio",
+    "path_depth",
+    "query_parameter_count",
+    "is_ip_host",
+    "uses_https",
+    "has_punycode",
+    "has_nonstandard_port",
+    "character_entropy",
+    "suspicious_term_count",
+    "has_login_path",
+    "has_auth_query",
+    "tld_length"
+  ],
+  "threshold": 0.5,
+  "validation_metrics": {
+    "rows": 23484,
+    "phishing_rate": 0.42488502810424117,
+    "threshold": 0.5,
+    "accuracy": 0.9886305569749617,
+    "precision": 0.9987673343605546,
+    "recall": 0.9744437763078774,
+    "f1": 0.9864556384112008,
+    "roc_auc": 0.9965866153872593,
+    "average_precision": 0.9972078412815515,
+    "false_positive_rate": 0.000888494002665482,
+    "confusion_matrix": {
+      "true_negative": 13494,
+      "false_positive": 12,
+      "false_negative": 255,
+      "true_positive": 9723
+    }
+  },
+  "test_metrics": {
+    "rows": 46721,
+    "phishing_rate": 0.42374949166327774,
+    "threshold": 0.5,
+    "accuracy": 0.9881423770895315,
+    "precision": 0.9983942815704963,
+    "recall": 0.9735831902212345,
+    "f1": 0.985832651391162,
+    "roc_auc": 0.9967927600916492,
+    "average_precision": 0.9972429815538413,
+    "false_positive_rate": 0.0011514318612338892,
+    "confusion_matrix": {
+      "true_negative": 26892,
+      "false_positive": 31,
+      "false_negative": 523,
+      "true_positive": 19275
+    }
+  },
+  "runtime_latency": {
+    "sample_count": 1000,
+    "p50_ms": 0.84875,
+    "p95_ms": 2.50834,
+    "scope": "single-URL local CPU feature extraction and inference; excludes HTTP/network time"
+  },
+  "dataset": {
+    "name": "PhiUSIIL Phishing URL (Website)",
+    "uci_id": 967,
+    "url": "https://archive.ics.uci.edu/static/public/967/data.csv",
+    "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    "citation": "Prasad, A., & Chandra, S. (2023). PhiUSIIL: A diverse security profile empowered phishing URL detection framework based on similarity index and incremental learning. Computers & Security, 103545. https://doi.org/10.1016/j.cose.2023.103545",
+    "sha256": "a236549cd369cd80bd478ff8e1779cbf44c58d5c3f79f7a51a1adbed7d06d1c6",
+    "rows": 235795,
+    "label_mapping": "UCI label 0 = phishing, label 1 = legitimate"
+  },
+  "training": {
+    "algorithm": "StandardScaler + LogisticRegression",
+    "scikit_learn_version": "1.9.1",
+    "input_features": "URL-derived lexical and structure features only",
+    "split": "group holdout by exact UCI Domain; random_state 42/43",
+    "train_rows": 165590,
+    "validation_rows": 23484,
+    "test_rows": 46721,
+    "threshold_selection": "lowest threshold >= 0.50 with validation false-positive rate <= 0.1%",
+    "created_at": "2026-10-06T16:28:25.069522+00:00"
+  }
+}

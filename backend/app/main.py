@@ -3,21 +3,42 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
 from .analyzer import analyze_cloudflare_firewall_event, analyze_event
 from .cloudflare import CloudflareBatchError, decode_logpush_batch
+from .security import (
+    AuthenticationConfigurationError,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE_SECONDS,
+    AnalystSession,
+    authenticate,
+    authentication_ready,
+    create_session,
+    read_session,
+    session_cookie_secure,
+)
+from .url_model import get_url_model_status
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    storage.initialize()
+    yield
 
 app = FastAPI(
     title="CyberGuard Threat Analysis API",
-    description="Analyze and persist security events for an authorized local deployment.",
-    version="1.2.0",
+    description="Analyze and persist security events for an authenticated deployment.",
+    version="1.3.0",
+    lifespan=lifespan,
 )
 
 origins = os.getenv(
@@ -27,9 +48,9 @@ origins = os.getenv(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in origins if origin.strip()],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 
 
@@ -76,31 +97,140 @@ class StatusUpdate(BaseModel):
     status: Literal["New", "Investigating", "Contained", "Resolved"]
 
 
-@app.on_event("startup")
-def initialize_storage() -> None:
-    storage.initialize()
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+_failed_login_attempts: dict[str, list[float]] = {}
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_ATTEMPT_LIMIT = 5
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "storage": "sqlite", "engine": "transparent-rule-based"}
+    url_model = get_url_model_status()
+    return {
+        "status": "ok",
+        "storage": "sqlite",
+        "engine": "hybrid-url-model-and-rules" if url_model["available"] else "transparent-rule-based",
+        "url_model": url_model,
+        "authentication_configured": authentication_ready(),
+    }
+
+
+def _analyst_session(request: Request) -> AnalystSession:
+    try:
+        session = read_session(request.cookies.get(SESSION_COOKIE_NAME))
+    except AuthenticationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if session is None:
+        raise HTTPException(status_code=401, detail="Sign in to access the analyst dashboard.")
+    return session
+
+
+def _require_csrf(request: Request, csrf_token: str | None) -> AnalystSession:
+    session = _analyst_session(request)
+    if not csrf_token or not hmac.compare_digest(csrf_token, session.csrf_token):
+        raise HTTPException(status_code=403, detail="A valid CSRF token is required.")
+    return session
+
+
+def _login_key() -> str:
+    return "analyst-account"
+
+
+def _check_login_rate_limit() -> None:
+    now = time.monotonic()
+    attempts = [
+        timestamp
+        for timestamp in _failed_login_attempts.get(_login_key(), [])
+        if now - timestamp < _LOGIN_WINDOW_SECONDS
+    ]
+    _failed_login_attempts[_login_key()] = attempts
+    if len(attempts) >= _LOGIN_ATTEMPT_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed sign-in attempts. Wait five minutes and try again.",
+            headers={"Retry-After": str(_LOGIN_WINDOW_SECONDS)},
+        )
+
+
+def _record_failed_login() -> None:
+    _failed_login_attempts.setdefault(_login_key(), []).append(time.monotonic())
+
+
+@app.post("/api/auth/login")
+def login(request: LoginRequest, response: Response) -> dict:
+    try:
+        _check_login_rate_limit()
+        if not authenticate(request.username, request.password):
+            _record_failed_login()
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+        cookie_value, session = create_session(request.username.strip())
+        secure = session_cookie_secure()
+    except AuthenticationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    _failed_login_attempts.pop(_login_key(), None)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=cookie_value,
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=secure,
+        samesite="strict",
+        path="/",
+    )
+    return {"username": session.username, "csrf_token": session.csrf_token}
+
+
+@app.get("/api/auth/session")
+def get_auth_session(request: Request) -> dict:
+    session = _analyst_session(request)
+    return {"username": session.username, "csrf_token": session.csrf_token}
+
+
+@app.post("/api/auth/logout")
+def logout(
+    request: Request,
+    response: Response,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+) -> dict:
+    _require_csrf(request, csrf_token)
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=session_cookie_secure(),
+        samesite="strict",
+        path="/",
+    )
+    return {"logged_out": True}
 
 
 @app.get("/api/events")
-def get_events(limit: int = 500, offset: int = 0) -> list[dict]:
+def get_events(request: Request, limit: int = 500, offset: int = 0) -> list[dict]:
+    _analyst_session(request)
     if not 1 <= limit <= 1000 or offset < 0:
         raise HTTPException(status_code=422, detail="Limit must be 1–1000 and offset cannot be negative.")
     return storage.list_events(limit=limit, offset=offset)
 
 
 @app.get("/api/summary")
-def get_summary() -> dict:
+def get_summary(request: Request) -> dict:
+    _analyst_session(request)
     return storage.get_summary()
 
 
 @app.patch("/api/events/{event_id}")
-def update_event(event_id: str, request: StatusUpdate) -> dict:
-    event = storage.update_status(event_id, request.status)
+def update_event(
+    request: Request,
+    event_id: str,
+    update: StatusUpdate,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+) -> dict:
+    _require_csrf(request, csrf_token)
+    event = storage.update_status(event_id, update.status)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found.")
     return event
@@ -193,7 +323,12 @@ async def ingest_cloudflare_logpush(request: Request) -> dict:
 
 
 @app.post("/api/analyze")
-def analyze(request: AnalyzeRequest) -> dict:
-    _validate_analysis_input(request)
-    event = analyze_event(request.model_dump())
+def analyze(
+    request: Request,
+    analysis: AnalyzeRequest,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+) -> dict:
+    _require_csrf(request, csrf_token)
+    _validate_analysis_input(analysis)
+    event = analyze_event(analysis.model_dump())
     return storage.insert_event(event)
