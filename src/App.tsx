@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertOctagon, ArrowUpRight, Bell, ChevronDown,
   CircleHelp, Clock3, Command, FileSearch, Fingerprint, Globe2, LayoutDashboard,
@@ -13,13 +13,15 @@ import {
 import type { ApiHealth } from "./api";
 import type { AnalysisInput, DashboardSummary, Severity, ThreatEvent } from "./types";
 
+type WorkspaceView = "Overview" | "Threat inbox" | "Identity & access" | "URL analysis" | "Investigations";
+
 const navItems = [
   { label: "Overview", icon: LayoutDashboard },
   { label: "Threat inbox", icon: ShieldAlert },
   { label: "Identity & access", icon: Fingerprint },
   { label: "URL analysis", icon: Globe2 },
   { label: "Investigations", icon: FileSearch },
-];
+] satisfies { label: WorkspaceView; icon: typeof LayoutDashboard }[];
 
 const severityRank: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Safe: 4 };
 
@@ -35,6 +37,8 @@ function App() {
   const [apiOnline, setApiOnline] = useState(false);
   const [filter, setFilter] = useState("All events");
   const [search, setSearch] = useState("");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("Overview");
+  const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<ThreatEvent | null>(null);
   const [showAnalyzer, setShowAnalyzer] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
@@ -45,6 +49,7 @@ function App() {
   const [analyst, setAnalyst] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [apiHealth, setApiHealth] = useState<ApiHealth | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState<AnalysisInput>({
     source: "email",
     content: "",
@@ -114,11 +119,18 @@ function App() {
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase();
     return events.filter((event) => {
-      const matchesFilter = filter === "All events" || event.severity === filter;
+      const matchesFilter = filter === "All events"
+        || (filter === "High risk" ? event.severity === "Critical" || event.severity === "High" : event.severity === filter);
       const matchesSearch = !query || `${event.id} ${event.subject} ${event.category} ${event.source}`.toLowerCase().includes(query);
-      return matchesFilter && matchesSearch;
+      const category = event.category.toLowerCase();
+      const matchesView = workspaceView === "Overview"
+        || workspaceView === "Threat inbox"
+        || (workspaceView === "Identity & access" && (event.source === "auth" || event.source === "identity" || category.includes("account") || category.includes("impersonation")))
+        || (workspaceView === "URL analysis" && (event.source === "url" || category.includes("url") || category.includes("phishing")))
+        || (workspaceView === "Investigations" && (event.status === "New" || event.status === "Investigating"));
+      return matchesFilter && matchesSearch && matchesView;
     }).sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || b.timestamp.localeCompare(a.timestamp));
-  }, [events, filter, search]);
+  }, [events, filter, search, workspaceView]);
 
   const highRiskEvents = (summary?.severity_counts_last_24h.Critical ?? 0) + (summary?.severity_counts_last_24h.High ?? 0);
   const recentEvents = events.slice(0, 5);
@@ -213,6 +225,39 @@ function App() {
     }
   }
 
+  function selectWorkspaceView(view: WorkspaceView) {
+    setWorkspaceView(view);
+    setNotice("");
+    setMobileNav(false);
+  }
+
+  function openHelp() {
+    setNotice("Analyze an event to assess a message, URL, identity report, sign-in, or network measurement. CyberGuard stores results in this service's database and provides recommended actions for analyst review; it does not block threats automatically.");
+    setMobileNav(false);
+  }
+
+  function openThreatIntelligence() {
+    setWorkspaceView("Threat inbox");
+    setFilter("All events");
+    setNotice("External threat-intelligence feeds are not connected. This inbox shows only events analyzed or ingested by this CyberGuard instance.");
+    setMobileNav(false);
+  }
+
+  function openResponsePlaybooks() {
+    setWorkspaceView("Investigations");
+    setFilter("All events");
+    setNotice("Response guidance is available on each event assessment. CyberGuard does not execute containment or blocking actions.");
+    setMobileNav(false);
+  }
+
+  function openNotifications() {
+    setWorkspaceView("Threat inbox");
+    setFilter("High risk");
+    setNotice("");
+    setMobileNav(false);
+    window.setTimeout(() => document.querySelector(".events-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
+  }
+
   if (authLoading) {
     return <div className="auth-shell"><p>Checking analyst session…</p></div>;
   }
@@ -237,14 +282,21 @@ function App() {
         <div className="nav-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
           {navItems.map(({ label, icon: Icon }) => (
-            <button key={label} className={`nav-item ${label === "Overview" ? "active" : ""}`} onClick={() => setMobileNav(false)}>
+            <button key={label} className={`nav-item ${workspaceView === label ? "active" : ""}`} aria-current={workspaceView === label ? "page" : undefined} onClick={() => {
+              selectWorkspaceView(label);
+              if (label === "URL analysis") {
+                setInput({ source: "url", content: "", sender: "", url: "" });
+                setError("");
+                setShowAnalyzer(true);
+              }
+            }}>
               <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
             </button>
           ))}
         </nav>
         <div className="nav-label tools-label">OPERATIONS</div>
-        <button className="nav-item"><Network size={17} strokeWidth={1.8} /><span>Threat intelligence</span></button>
-        <button className="nav-item"><Activity size={17} strokeWidth={1.8} /><span>Response playbooks</span></button>
+        <button className="nav-item" onClick={openThreatIntelligence}><Network size={17} strokeWidth={1.8} /><span>Threat intelligence</span></button>
+        <button className="nav-item" onClick={openResponsePlaybooks}><Activity size={17} strokeWidth={1.8} /><span>Response playbooks</span></button>
         <div className="sidebar-spacer" />
         <div className="plan-card">
           <div className="plan-icon"><Sparkles size={16} /></div>
@@ -253,7 +305,7 @@ function App() {
           <div className="plan-progress"><span /></div>
           <div className="plan-caption"><span>RULE-BASED</span><span>v1.0</span></div>
         </div>
-        <button className="nav-item bottom-nav"><CircleHelp size={17} strokeWidth={1.8} /><span>Help & documentation</span></button>
+        <button className="nav-item bottom-nav" onClick={openHelp}><CircleHelp size={17} strokeWidth={1.8} /><span>Help & documentation</span></button>
         <div className="profile">
           <div className="profile-avatar">{analyst.slice(0, 2).toUpperCase()}</div>
           <div className="profile-copy"><b>{analyst}</b><span>Authenticated session</span></div>
@@ -267,8 +319,11 @@ function App() {
           <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><b>Overview</b></div>
           <div className="topbar-right">
             <div className="status-pill"><span className={`status-dot ${apiOnline ? "online" : ""}`} />{apiOnline ? "API connected" : "API offline"}<span className="status-separator" /><span className={`status-dot ${apiHealth?.url_model.available ? "online" : ""}`} />{apiHealth?.url_model.available ? "URL model active" : "URL rules only"}</div>
-            <button className="icon-button top-search" aria-label="Search"><Search size={17} /></button>
-            <button className="icon-button notification-button" aria-label="Notifications"><Bell size={17} /><i /></button>
+            <button className="icon-button top-search" aria-label="Focus event search" onClick={() => {
+              document.querySelector(".events-panel")?.scrollIntoView({ behavior: "smooth" });
+              window.setTimeout(() => searchInput.current?.focus(), 250);
+            }}><Search size={17} /></button>
+            <button className="icon-button notification-button" aria-label="Show high-risk events" onClick={openNotifications}><Bell size={17} /><i /></button>
             <div className="top-avatar">A</div>
           </div>
         </header>
@@ -277,13 +332,14 @@ function App() {
           <section className="page-heading">
             <div>
               <div className="eyebrow"><span className="eyebrow-line" />{new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date()).toUpperCase()}</div>
-              <h1>Security overview</h1>
+              <h1>{workspaceView === "Overview" ? "Security overview" : workspaceView}</h1>
               <p className="heading-subtitle">Persisted analysis events from this CyberGuard instance.</p>
             </div>
             <button className="primary-button" onClick={() => { setError(""); setShowAnalyzer(true); }}>
               <Plus size={17} /> Analyze an event <span className="shortcut">⌘ K</span>
             </button>
           </section>
+          {notice && <div className="connection-warning" role="status">{notice}<button className="notice-dismiss" onClick={() => setNotice("")} aria-label="Dismiss message"><X size={14} /></button></div>}
           {dashboardError && <div className="connection-warning" role="status">{dashboardError} {summary ? "Showing the last data successfully loaded." : "No dashboard data has been loaded."}</div>}
 
           <section className="metrics-grid" aria-label="Security metrics">
@@ -297,7 +353,7 @@ function App() {
             <div className="panel trend-panel">
               <div className="panel-heading">
                 <div><h2>Event activity</h2><p>Persisted analyses by hour, last 24 hours</p></div>
-                <button className="select-button">Last 24 hours <ChevronDown size={14} /></button>
+                <span className="select-button">Last 24 hours</span>
               </div>
               <div className="chart-legend">
                 <span><i className="legend-dot phishing" />Analyzed events</span>
@@ -318,7 +374,7 @@ function App() {
             <div className="panel breakdown-panel">
               <div className="panel-heading">
                 <div><h2>Event breakdown</h2><p>By category, last 24 hours</p></div>
-                <button className="icon-button small-icon" aria-label="More options"><MoreHorizontal size={18} /></button>
+                <span className="icon-button small-icon" aria-hidden="true"><MoreHorizontal size={18} /></span>
               </div>
               <div className="donut-wrap">
                 <div className="donut" style={{ background: categoryGradient }}><div><strong>{(summary?.category_counts ?? []).reduce((sum, item) => sum + item.count, 0)}</strong><span>events</span></div></div>
@@ -336,11 +392,11 @@ function App() {
                 <div><h2>Recent threat events <span className="event-count">{events.length}</span></h2><p>Review and respond to the latest detections</p></div>
               </div>
               <div className="event-tools">
-                <label className="table-search"><Search size={15} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search events..." /></label>
+                <label className="table-search"><Search size={15} /><input ref={searchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search events..." /></label>
                 <label className="filter-select"><SlidersHorizontal size={14} /><select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by severity">
-                  {["All events", "Critical", "High", "Medium", "Low", "Safe"].map((item) => <option key={item}>{item}</option>)}
+                  {["All events", "High risk", "Critical", "High", "Medium", "Low", "Safe"].map((item) => <option key={item}>{item}</option>)}
                 </select><ChevronDown size={13} /></label>
-                <button className="icon-button small-icon table-more" aria-label="More event options"><MoreHorizontal size={18} /></button>
+                <span className="icon-button small-icon table-more" aria-hidden="true"><MoreHorizontal size={18} /></span>
               </div>
             </div>
             <div className="table-scroll">

@@ -75,7 +75,8 @@ button { color: inherit; cursor: pointer; }
 h1,h2,h3,p { margin-top: 0; }
 .page-heading h1 { margin: 8px 0 5px; color: #eff3f8; letter-spacing: -1.2px; font: 700 25px Manrope, sans-serif; }
 .heading-subtitle { margin: 0; color: #8894a3; font-size: 11px; }
-.connection-warning { margin: -10px 0 14px; padding: 9px 11px; border: 1px solid #5a3e2c; border-radius: 6px; background: #2a201a; color: #e2b478; font-size: 10px; }
+.connection-warning { display: flex; align-items: center; gap: 10px; margin: -10px 0 14px; padding: 9px 11px; border: 1px solid #5a3e2c; border-radius: 6px; background: #2a201a; color: #e2b478; font-size: 10px; }
+.notice-dismiss { flex: 0 0 auto; margin-left: auto; padding: 2px; border: 0; color: inherit; background: transparent; cursor: pointer; }
 .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; min-height: 34px; border: 1px solid #5ca67e; border-radius: 6px; background: #5aa47c; color: #07130d; font-size: 10px; font-weight: 700; transition: background .15s, transform .15s; white-space: nowrap; }
 .primary-button:hover { background: #74bc94; transform: translateY(-1px); }
 .primary-button:disabled { opacity: .65; cursor: wait; }
