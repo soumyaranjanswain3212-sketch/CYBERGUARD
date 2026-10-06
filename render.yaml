@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: cyberguard
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: CYBERGUARD_ANALYST_USERNAME
+        value: analyst
+      - key: CYBERGUARD_ANALYST_PASSWORD_HASH
+        sync: false
+      - key: CYBERGUARD_SESSION_SECRET
+        sync: false
+      - key: CYBERGUARD_INGEST_TOKEN
+        sync: false
+      - key: CYBERGUARD_COOKIE_SECURE
+        value: "true"
+      - key: CYBERGUARD_DB_PATH
+        value: /tmp/cyberguard.sqlite3
